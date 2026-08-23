@@ -1,0 +1,5 @@
+IDEA.md
+.build/
+.swiftpm/
+Calnip.app/
+.DS_Store
