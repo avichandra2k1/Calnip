@@ -38,9 +38,11 @@ struct PanelView: View {
             if typing {
                 chipsRow
                     .padding(.horizontal, 24)
-                if !model.context.isEmpty, model.status == .idle {
-                    eventSection(model.context, header: "Schedule")
-                }
+            }
+            // The day list stays put while typing — conflicts light up in place
+            // instead of the layout jumping on the first character.
+            if typing, !model.context.isEmpty, model.status == .idle {
+                eventSection(model.context, header: dayText)
             } else if !todayDisplay.isEmpty {
                 eventSection(todayDisplay, header: "Today")
             }
@@ -84,6 +86,14 @@ struct PanelView: View {
                     onCancel: { model.cancel() }
                 )
             }
+            if expanded {
+                HStack(spacing: 6) {
+                    Keycap("esc")
+                    Text("close")
+                        .font(.system(size: 12))
+                }
+                .foregroundStyle(.tertiary)
+            }
         }
         .padding(.horizontal, 24)
         .padding(.vertical, 20)
@@ -111,15 +121,7 @@ struct PanelView: View {
                 } else {
                     Chip(icon: "clock", text: timeText)
                 }
-                if let recurrence = model.parsed.recurrence {
-                    Chip(icon: "repeat", text: recurrence.label)
-                }
-                if let until = model.parsed.recurrenceEnd {
-                    Chip(icon: "arrow.right.to.line", text: "Until \(untilText(until))")
-                }
-                if model.queryUnmatched, let query = model.parsed.calendarQuery {
-                    Chip(icon: "questionmark.circle", text: query, tint: .orange)
-                } else if !expanded, let target = model.target {
+                if !model.queryUnmatched, let target = model.target {
                     HStack(spacing: 6) {
                         Circle()
                             .fill(target.color)
@@ -131,6 +133,15 @@ struct PanelView: View {
                     .padding(.horizontal, 12)
                     .padding(.vertical, 6)
                     .background(.quaternary.opacity(0.5), in: .capsule)
+                }
+                if let recurrence = model.parsed.recurrence {
+                    Chip(icon: "repeat", text: recurrence.label)
+                }
+                if let until = model.parsed.recurrenceEnd {
+                    Chip(icon: "arrow.right.to.line", text: "Until \(untilText(until))")
+                }
+                if model.queryUnmatched, let query = model.parsed.calendarQuery {
+                    Chip(icon: "questionmark.circle", text: query, tint: .orange)
                 }
             }
             Spacer()
@@ -200,7 +211,7 @@ struct PanelView: View {
     private var footer: some View {
         HStack(spacing: 12) {
             calendarIndex
-            Spacer()
+            Spacer(minLength: 16)
             Button {
                 model.cancel()
                 SettingsWindowController.shared.show()
@@ -229,14 +240,14 @@ struct PanelView: View {
     private var calendarIndex: some View {
         let calendars = Array(model.calendars.prefix(9).enumerated())
         let half = (calendars.count + 1) / 2
-        return VStack(alignment: .leading, spacing: 3) {
-            HStack(spacing: 4) {
+        return VStack(alignment: .leading, spacing: 5) {
+            HStack(spacing: 14) {
                 ForEach(calendars[..<half], id: \.element.id) { index, calendar in
                     calendarIndexItem(calendar, number: index + 1)
                 }
             }
             if calendars.count > half {
-                HStack(spacing: 4) {
+                HStack(spacing: 14) {
                     ForEach(calendars[half...], id: \.element.id) { index, calendar in
                         calendarIndexItem(calendar, number: index + 1)
                     }
@@ -247,20 +258,17 @@ struct PanelView: View {
 
     private func calendarIndexItem(_ calendar: CalendarInfo, number: Int) -> some View {
         let isTarget = model.target?.id == calendar.id
-        return HStack(spacing: 5) {
+        return HStack(spacing: 6) {
             Text("⌘\(number)")
-                .font(.system(size: 10, weight: .medium))
+                .font(.system(size: 11, weight: .medium))
                 .foregroundStyle(isTarget ? AnyShapeStyle(.secondary) : AnyShapeStyle(.tertiary))
-            Circle()
-                .fill(calendar.color)
-                .frame(width: 7, height: 7)
             Text(calendar.name)
-                .font(.system(size: 11, weight: isTarget ? .medium : .regular))
+                .font(.system(size: 13, weight: isTarget ? .medium : .regular))
                 .foregroundStyle(isTarget ? AnyShapeStyle(.primary) : AnyShapeStyle(.secondary))
                 .lineLimit(1)
         }
-        .padding(.horizontal, 8)
-        .padding(.vertical, 4)
+        .padding(.horizontal, 10)
+        .padding(.vertical, 5)
         .background(
             isTarget ? AnyShapeStyle(.quaternary.opacity(0.7)) : AnyShapeStyle(.clear),
             in: .capsule

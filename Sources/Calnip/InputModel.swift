@@ -98,9 +98,13 @@ final class InputModel: ObservableObject {
             resolveTarget()
             guard accessGranted else { return }
             calendars = CalendarService.shared.writableCalendars.map(CalendarInfo.init)
-            todayEvents = CalendarService.shared.eventsOnDay(of: Date())
-                .map { ContextEvent($0, conflict: false) }
+            loadToday()
         }
+    }
+
+    private func loadToday() {
+        todayEvents = CalendarService.shared.eventsOnDay(of: Date())
+            .map { ContextEvent($0, conflict: false) }
     }
 
     /// Click on a calendar row.
@@ -183,8 +187,11 @@ final class InputModel: ObservableObject {
                     query: entry.calendarQuery, pickedID: pickedID,
                     recurrence: entry.recurrence, recurrenceEnd: entry.recurrenceEnd)
                 status = .saved(calendar: calendar.title)
-                try? await Task.sleep(nanoseconds: 750_000_000)
-                onDismiss?()
+                try? await Task.sleep(nanoseconds: 900_000_000)
+                // Stay open for the next entry — esc closes.
+                text = ""
+                status = .idle
+                loadToday()
             } catch {
                 status = .error(error.localizedDescription)
             }
