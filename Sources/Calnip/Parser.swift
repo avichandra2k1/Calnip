@@ -34,6 +34,7 @@ struct Token: Equatable {
         case time(startMinute: Int, endMinute: Int?)
         case day(offset: Int)   // 0 = today, 1 = tomorrow
         case repeatRule(RecurrenceSpec)
+        case until(Date)
         case calendar(query: String)
     }
 
@@ -51,10 +52,12 @@ struct ParsedEntry: Equatable {
     var tokens: [Token] = []
     var start: Date?
     var end: Date?
+    var isAllDay: Bool = false
     var hasExplicitTime: Bool = false
     var hasExplicitEnd: Bool = false
     var dayOffset: Int = 0
     var recurrence: RecurrenceSpec?
+    var recurrenceEnd: Date?
     var calendarQuery: String?
 }
 
@@ -79,9 +82,24 @@ enum Parser {
         pattern: #"(?i)\b(?:(tod(?:ay)?)|(tom(?:orrow)?))\b"#
     )
 
-    // "every weekday", "every other monday", "every day/week/month/year"
+    // "every day", "everyday", "everyd" (partial), "every other monday"
     private static let repeatRegex = try! NSRegularExpression(
-        pattern: #"(?i)\bevery\s+(other\s+)?(weekday|day|week|month|year|monday|mon|tuesday|tues|tue|wednesday|wed|thursday|thurs|thur|thu|friday|fri|saturday|sat|sunday|sun)s?\b"#
+        pattern: #"(?i)\bevery\s*(other\s+)?([a-z]+)\b"#
+    )
+
+    // "till 29 nov" / "until nov 29th"
+    private static let untilDayMonthRegex = try! NSRegularExpression(
+        pattern: #"(?i)\b(?:till|until|til)\s+(?:(\d{1,2})(?:st|nd|rd|th)?\s+([a-z]{3,})|([a-z]{3,})\s+(\d{1,2})(?:st|nd|rd|th)?)(?!\w)"#
+    )
+
+    // "till tue"
+    private static let untilWordRegex = try! NSRegularExpression(
+        pattern: #"(?i)\b(?:till|until|til)\s+([a-z]{3,})\b"#
+    )
+
+    // "till 29th"
+    private static let untilBareDayRegex = try! NSRegularExpression(
+        pattern: #"(?i)\b(?:till|until|til)\s+(\d{1,2})(?:st|nd|rd|th)?(?![\w:])"#
     )
 
     // ">work", ">Personal"
@@ -94,7 +112,35 @@ enum Parser {
         pattern: #"(?i)\bat\s+$"#
     )
 
-    static func parse(_ input: String, now: Date = Date(), calendar: Calendar = .current) -> ParsedEntry {
+    /// Recurrence units in ambiguity-priority order: a typed prefix chips the
+    /// first unit it matches, so "everyd" → day, "everyw" → week, "everyweekd" → weekday.
+    private static let repeatUnits: [(name: String, make: (Int) -> RecurrenceSpec)] = [
+        ("day", { .daily(interval: $0) }),
+        ("week", { .week(interval: $0) }),
+        ("weekday", { _ in .weekdays }),
+        ("month", { .monthly(interval: $0) }),
+        ("year", { .yearly(interval: $0) }),
+        ("monday", { .weekly(weekday: 2, interval: $0) }),
+        ("tuesday", { .weekly(weekday: 3, interval: $0) }),
+        ("wednesday", { .weekly(weekday: 4, interval: $0) }),
+        ("thursday", { .weekly(weekday: 5, interval: $0) }),
+        ("friday", { .weekly(weekday: 6, interval: $0) }),
+        ("saturday", { .weekly(weekday: 7, interval: $0) }),
+        ("sunday", { .weekly(weekday: 1, interval: $0) }),
+    ]
+
+    private static let weekdayNames = [
+        "sunday": 1, "monday": 2, "tuesday": 3, "wednesday": 4,
+        "thursday": 5, "friday": 6, "saturday": 7,
+    ]
+
+    private static let monthNames = [
+        "january": 1, "february": 2, "march": 3, "april": 4, "may": 5, "june": 6,
+        "july": 7, "august": 8, "september": 9, "october": 10, "november": 11, "december": 12,
+    ]
+
+    static func parse(_ input: String, now: Date = Date(), calendar: Calendar = .current,
+                      defaultDurationMinutes: Int = 60) -> ParsedEntry {
         let ns = input as NSString
         let full = NSRange(location: 0, length: ns.length)
         var entry = ParsedEntry()
@@ -107,15 +153,18 @@ enum Parser {
         func overlapsExisting(_ range: NSRange) -> Bool {
             tokens.contains { NSIntersectionRange($0.range, range).length > 0 }
         }
-        func timeToken(kind: Token.Kind, matchRange: NSRange) -> Token {
+        func append(_ kind: Token.Kind, _ range: NSRange, removal: NSRange? = nil) {
+            tokens.append(Token(kind: kind, range: range, removalRange: removal ?? range,
+                                text: ns.substring(with: range)))
+        }
+        func timeToken(kind: Token.Kind, matchRange: NSRange) {
             var removal = matchRange
             let prefix = NSRange(location: 0, length: matchRange.location)
             if let at = atPrefixRegex.firstMatch(in: input, range: prefix) {
                 removal = NSRange(location: at.range.location,
                                   length: NSMaxRange(matchRange) - at.range.location)
             }
-            return Token(kind: kind, range: matchRange, removalRange: removal,
-                         text: ns.substring(with: matchRange))
+            append(kind, matchRange, removal: removal)
         }
 
         // --- time: range first, then single, then bare "at N" ---
@@ -127,7 +176,7 @@ enum Parser {
             if minS <= 59, minE <= 59,
                let (start, end) = resolveRange(rawS: rawS, minS: minS, merS: meridiem(group(m, 3)),
                                                rawE: rawE, minE: minE, merE: meridiem(group(m, 6))) {
-                tokens.append(timeToken(kind: .time(startMinute: start, endMinute: end), matchRange: m.range))
+                timeToken(kind: .time(startMinute: start, endMinute: end), matchRange: m.range)
             }
         }
         if tokens.isEmpty, let m = timeRegex.firstMatch(in: input, range: full) {
@@ -146,7 +195,7 @@ enum Parser {
             }
             if raw <= 23, minute <= 59 {
                 let start = resolveSingle(raw: raw, minute: minute, mer: mer)
-                tokens.append(timeToken(kind: .time(startMinute: start, endMinute: nil), matchRange: m.range))
+                timeToken(kind: .time(startMinute: start, endMinute: nil), matchRange: m.range)
             }
         }
         if tokens.isEmpty, let m = atBareRegex.firstMatch(in: input, range: full),
@@ -155,44 +204,35 @@ enum Parser {
             if minute <= 59 {
                 let start = resolveSingle(raw: raw, minute: minute, mer: nil)
                 // Chip the whole "at 4" — reads better than a bare number.
-                tokens.append(Token(kind: .time(startMinute: start, endMinute: nil),
-                                    range: m.range, removalRange: m.range,
-                                    text: ns.substring(with: m.range)))
+                append(.time(startMinute: start, endMinute: nil), m.range)
             }
         }
 
         // --- day ---
         for m in dayRegex.matches(in: input, range: full) where !overlapsExisting(m.range) {
             let offset = m.range(at: 2).location == NSNotFound ? 0 : 1
-            tokens.append(Token(kind: .day(offset: offset), range: m.range,
-                                removalRange: m.range, text: ns.substring(with: m.range)))
+            append(.day(offset: offset), m.range)
             break
         }
 
         // --- recurrence ---
-        if let m = repeatRegex.firstMatch(in: input, range: full), !overlapsExisting(m.range),
-           let spec = recurrenceSpec(word: group(m, 2) ?? "", other: group(m, 1) != nil) {
-            tokens.append(Token(kind: .repeatRule(spec), range: m.range,
-                                removalRange: m.range, text: ns.substring(with: m.range)))
-        }
-
-        // --- calendar ---
-        if let m = calendarRegex.firstMatch(in: input, range: full), !overlapsExisting(m.range),
-           let query = group(m, 1) {
-            tokens.append(Token(kind: .calendar(query: query), range: m.range,
-                                removalRange: m.range, text: ns.substring(with: m.range)))
+        for m in repeatRegex.matches(in: input, range: full) where !overlapsExisting(m.range) {
+            let word = (group(m, 2) ?? "").lowercased()
+            guard let make = resolveUnit(word) else { continue }
+            append(.repeatRule(make(group(m, 1) == nil ? 1 : 2)), m.range)
+            break
         }
 
         entry.tokens = tokens
 
-        // --- title = input minus chips ---
-        var title = input as NSString
-        for token in tokens.sorted(by: { $0.removalRange.location > $1.removalRange.location }) {
-            title = title.replacingCharacters(in: token.removalRange, with: " ") as NSString
+        // (recurrence end and dates are resolved after tokens below)
+
+        // --- calendar ---
+        if let m = calendarRegex.firstMatch(in: input, range: full), !overlapsExisting(m.range),
+           let query = group(m, 1) {
+            append(.calendar(query: query), m.range)
+            entry.tokens = tokens
         }
-        entry.title = (title as String)
-            .replacingOccurrences(of: #"\s+"#, with: " ", options: .regularExpression)
-            .trimmingCharacters(in: .whitespacesAndNewlines)
 
         // --- pull structured values out of tokens ---
         var timeMinutes: (start: Int, end: Int?)?
@@ -202,6 +242,7 @@ enum Parser {
             case .day(let offset): entry.dayOffset = offset
             case .repeatRule(let spec): entry.recurrence = spec
             case .calendar(let query): entry.calendarQuery = query
+            case .until: break
             }
         }
 
@@ -229,17 +270,75 @@ enum Parser {
                 entry.hasExplicitEnd = true
                 entry.end = dayStart.addingTimeInterval(TimeInterval(endMin * 60))
             } else {
-                entry.end = entry.start?.addingTimeInterval(3600)
+                entry.end = entry.start?.addingTimeInterval(TimeInterval(defaultDurationMinutes * 60))
             }
         } else {
-            // Default: next full hour.
-            let comps = calendar.dateComponents([.year, .month, .day, .hour], from: baseDay)
-            let start = calendar.date(from: comps).flatMap { calendar.date(byAdding: .hour, value: 1, to: $0) } ?? baseDay
-            entry.start = start
-            entry.end = start.addingTimeInterval(3600)
+            // No time → all-day event.
+            entry.isAllDay = true
+            entry.start = dayStart
+            entry.end = calendar.date(byAdding: .day, value: 1, to: dayStart)
         }
 
+        // --- recurrence end: "till tue", "until 29th", "till 29 nov" ---
+        if entry.recurrence != nil,
+           let (date, range) = scanUntil(input, ns: ns, full: full, after: dayStart,
+                                         calendar: calendar, overlaps: overlapsExisting, group: group) {
+            append(.until(date), range)
+            entry.tokens = tokens
+            entry.recurrenceEnd = date
+            // Re-derive title below with the extra token included.
+        }
+
+        // --- title = input minus chips ---
+        var title = input as NSString
+        for token in tokens.sorted(by: { $0.removalRange.location > $1.removalRange.location }) {
+            title = title.replacingCharacters(in: token.removalRange, with: " ") as NSString
+        }
+        entry.title = (title as String)
+            .replacingOccurrences(of: #"\s+"#, with: " ", options: .regularExpression)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+
         return entry
+    }
+
+    // MARK: - Until
+
+    private static func scanUntil(
+        _ input: String, ns: NSString, full: NSRange, after start: Date, calendar: Calendar,
+        overlaps: (NSRange) -> Bool, group: (NSTextCheckingResult, Int) -> String?
+    ) -> (Date, NSRange)? {
+        func endOfDay(_ date: Date) -> Date {
+            calendar.startOfDay(for: date).addingTimeInterval(86399)
+        }
+        func next(matching comps: DateComponents) -> Date? {
+            calendar.nextDate(after: start, matching: comps, matchingPolicy: .nextTime)
+        }
+
+        // "till 29 nov" / "until nov 29th"
+        if let m = untilDayMonthRegex.firstMatch(in: input, range: full), !overlaps(m.range) {
+            let dayStr = group(m, 1) ?? group(m, 4)
+            let monthWord = (group(m, 2) ?? group(m, 3) ?? "").lowercased()
+            if let dayStr, let day = Int(dayStr), (1...31).contains(day),
+               let month = monthNames.first(where: { $0.key.hasPrefix(monthWord) })?.value,
+               let date = next(matching: DateComponents(month: month, day: day)) {
+                return (endOfDay(date), m.range)
+            }
+        }
+        // "till tue"
+        if let m = untilWordRegex.firstMatch(in: input, range: full), !overlaps(m.range) {
+            let word = (group(m, 1) ?? "").lowercased()
+            if let weekday = weekdayNames.first(where: { $0.key.hasPrefix(word) })?.value,
+               let date = next(matching: DateComponents(weekday: weekday)) {
+                return (endOfDay(date), m.range)
+            }
+        }
+        // "till 29th"
+        if let m = untilBareDayRegex.firstMatch(in: input, range: full), !overlaps(m.range),
+           let day = Int(group(m, 1) ?? ""), (1...31).contains(day),
+           let date = next(matching: DateComponents(day: day)) {
+            return (endOfDay(date), m.range)
+        }
+        return nil
     }
 
     // MARK: - Time resolution
@@ -306,18 +405,13 @@ enum Parser {
 
     // MARK: - Recurrence
 
-    private static func recurrenceSpec(word: String, other: Bool) -> RecurrenceSpec? {
-        let interval = other ? 2 : 1
-        let weekdays = ["sun": 1, "mon": 2, "tue": 3, "wed": 4, "thu": 5, "fri": 6, "sat": 7]
-        switch word.lowercased() {
-        case "day": return .daily(interval: interval)
-        case "weekday": return .weekdays
-        case "week": return .week(interval: interval)
-        case "month": return .monthly(interval: interval)
-        case "year": return .yearly(interval: interval)
-        default:
-            guard let weekday = weekdays[String(word.lowercased().prefix(3))] else { return nil }
-            return .weekly(weekday: weekday, interval: interval)
+    private static func resolveUnit(_ word: String) -> ((Int) -> RecurrenceSpec)? {
+        var w = word
+        if let unit = repeatUnits.first(where: { $0.name.hasPrefix(w) }) { return unit.make }
+        if w.hasSuffix("s") {   // "mondays", "weekdays"
+            w.removeLast()
+            if let unit = repeatUnits.first(where: { $0.name.hasPrefix(w) }) { return unit.make }
         }
+        return nil
     }
 }
