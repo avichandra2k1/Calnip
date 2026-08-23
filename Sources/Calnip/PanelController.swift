@@ -105,7 +105,7 @@ final class PanelController: NSObject, NSWindowDelegate {
             let size = panel.frame.size
             desiredTopLeft = NSPoint(
                 x: frame.midX - size.width / 2,
-                y: frame.maxY - frame.height * 0.25
+                y: frame.maxY - frame.height * 0.1
             )
             panel.setFrameTopLeftPoint(desiredTopLeft)
         }

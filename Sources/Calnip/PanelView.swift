@@ -138,6 +138,13 @@ struct PanelView: View {
                 if model.queryUnmatched, let query = model.parsed.calendarQuery {
                     Chip(icon: "questionmark.circle", text: query, tint: .orange)
                 }
+                let conflicts = model.timeline.rows.filter(\.isConflict)
+                if typing, let first = conflicts.first {
+                    Chip(icon: "xmark.octagon.fill",
+                         text: "Conflicts with \(first.title)"
+                            + (conflicts.count > 1 ? " +\(conflicts.count - 1)" : ""),
+                         tint: .red)
+                }
             }
             Spacer()
             if model.status == .saving {
@@ -394,10 +401,9 @@ struct PanelView: View {
             .foregroundStyle(event.color)
         }
         .overlay {
-            if event.isConflict {
-                RoundedRectangle(cornerRadius: 7)
-                    .strokeBorder(.red.opacity(0.9), lineWidth: 1.5)
-            } else if selected {
+            // Conflicts stay unstyled here — the overlapping ghost makes the
+            // collision obvious; the existing event shouldn't light up.
+            if selected {
                 RoundedRectangle(cornerRadius: 7)
                     .strokeBorder(.primary.opacity(0.65), lineWidth: 1.5)
             }
@@ -417,8 +423,8 @@ struct PanelView: View {
             RoundedRectangle(cornerRadius: 7)
                 .fill(Color.accentColor.opacity(0.2))
             RoundedRectangle(cornerRadius: 7)
-                .strokeBorder(Color.accentColor.opacity(0.9),
-                              style: StrokeStyle(lineWidth: 1.2, dash: [4, 3]))
+                .strokeBorder(Color.accentColor,
+                              style: StrokeStyle(lineWidth: 1.5, dash: [4, 3]))
             Group {
                 if compact {
                     HStack(spacing: 6) {
