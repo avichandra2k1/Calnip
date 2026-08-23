@@ -10,6 +10,8 @@ struct TokenField: NSViewRepresentable {
     @Binding var text: String
     var onSubmit: () -> Void
     var onCancel: () -> Void
+    /// Return true to consume the key (day browsing); false keeps caret behavior.
+    var onArrow: (ArrowKey) -> Bool = { _ in false }
 
     static let font = NSFont.systemFont(ofSize: 24, weight: .regular)
 
@@ -97,6 +99,14 @@ struct TokenField: NSViewRepresentable {
             case #selector(NSResponder.cancelOperation(_:)):
                 parent.onCancel()
                 return true
+            case #selector(NSResponder.moveDown(_:)):
+                return parent.onArrow(.down)
+            case #selector(NSResponder.moveUp(_:)):
+                return parent.onArrow(.up)
+            case #selector(NSResponder.moveLeft(_:)):
+                return parent.onArrow(.left)
+            case #selector(NSResponder.moveRight(_:)):
+                return parent.onArrow(.right)
             default:
                 return false
             }

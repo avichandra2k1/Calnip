@@ -8,6 +8,7 @@ enum Settings {
     static let showHintsKey = "showHints"
     static let defaultDurationKey = "defaultDurationMinutes"
     static let defaultCalendarKey = "defaultCalendarID"
+    static let calendarSlotsKey = "calendarSlots"
 
     static var isExpanded: Bool {
         UserDefaults.standard.string(forKey: viewModeKey) ?? "expanded" == "expanded"
@@ -15,6 +16,13 @@ enum Settings {
     static var defaultDuration: Int {
         let value = UserDefaults.standard.integer(forKey: defaultDurationKey)
         return value > 0 ? value : 60
+    }
+    /// ⌘1–9 slot assignments; empty string = unassigned slot.
+    static var slotIDs: [String] {
+        guard let raw = UserDefaults.standard.string(forKey: calendarSlotsKey), !raw.isEmpty else {
+            return []
+        }
+        return raw.components(separatedBy: ",")
     }
 }
 
@@ -28,6 +36,12 @@ struct CalendarInfo: Equatable, Identifiable {
         name = calendar.title
         color = Color(nsColor: calendar.color ?? .controlAccentColor)
     }
+}
+
+struct SlotCalendar: Equatable, Identifiable {
+    let number: Int
+    let info: CalendarInfo
+    var id: String { info.id }
 }
 
 struct ContextEvent: Equatable, Identifiable {
@@ -50,6 +64,10 @@ struct ContextEvent: Equatable, Identifiable {
     }
 }
 
+enum ArrowKey {
+    case up, down, left, right
+}
+
 @MainActor
 final class InputModel: ObservableObject {
     enum Status: Equatable {
@@ -62,21 +80,25 @@ final class InputModel: ObservableObject {
     @Published var text: String = "" {
         didSet {
             parsed = Parser.parse(text, defaultDurationMinutes: Settings.defaultDuration)
+            browsedDay = nil
             resolveTarget()
-            scheduleContextRefresh()
+            scheduleTimelineRefresh()
         }
     }
     @Published private(set) var parsed = ParsedEntry()
     @Published var status: Status = .idle
     @Published private(set) var target: CalendarInfo?
     @Published private(set) var queryUnmatched = false
-    @Published private(set) var context: [ContextEvent] = []
-    @Published private(set) var todayEvents: [ContextEvent] = []
+    /// Events of the displayed day, all-day first, conflicts marked.
+    @Published private(set) var timeline: [ContextEvent] = []
     @Published private(set) var calendars: [CalendarInfo] = []
+    @Published private(set) var slotCalendars: [SlotCalendar] = []
+    /// Non-nil while arrow-key browsing; overrides the parsed day.
+    @Published private(set) var browsedDay: Date?
 
     private var accessGranted = false
     private var pickedCalendarID: String?
-    private var contextTask: Task<Void, Never>?
+    private var timelineTask: Task<Void, Never>?
 
     /// Set by PanelController — called when the panel should close.
     var onDismiss: (() -> Void)?
@@ -85,11 +107,18 @@ final class InputModel: ObservableObject {
         !parsed.title.isEmpty && status != .saving
     }
 
+    /// The day the timeline shows.
+    var displayDay: Date {
+        if let browsedDay { return browsedDay }
+        if !text.isEmpty, let start = parsed.start { return start }
+        return Date()
+    }
+
     func reset() {
         text = ""
         status = .idle
         pickedCalendarID = nil
-        context = []
+        browsedDay = nil
     }
 
     func prepare() {
@@ -98,29 +127,34 @@ final class InputModel: ObservableObject {
             resolveTarget()
             guard accessGranted else { return }
             calendars = CalendarService.shared.writableCalendars.map(CalendarInfo.init)
-            loadToday()
+            loadSlots()
+            scheduleTimelineRefresh()
         }
     }
 
-    private func loadToday() {
-        todayEvents = CalendarService.shared.eventsOnDay(of: Date())
-            .map { ContextEvent($0, conflict: false) }
+    private func loadSlots() {
+        let stored = Settings.slotIDs
+        let ids = stored.isEmpty ? calendars.prefix(6).map(\.id) : stored
+        slotCalendars = ids.enumerated().compactMap { index, id in
+            guard !id.isEmpty, let info = calendars.first(where: { $0.id == id }) else { return nil }
+            return SlotCalendar(number: index + 1, info: info)
+        }
     }
 
-    /// Click on a calendar row.
+    // MARK: - Calendar picking
+
+    /// ⌘1–9 → assigned slot.
+    func pickCalendar(_ number: Int) -> Bool {
+        guard let slot = slotCalendars.first(where: { $0.number == number }) else { return false }
+        pickedCalendarID = slot.info.id
+        resolveTarget()
+        return true
+    }
+
+    /// Click on a calendar in the footer index.
     func pickCalendar(id: String) {
         pickedCalendarID = id
         resolveTarget()
-    }
-
-    /// ⌘1–9 → nth writable calendar (alphabetical).
-    func pickCalendar(_ number: Int) -> Bool {
-        guard accessGranted else { return false }
-        let calendars = CalendarService.shared.writableCalendars
-        guard number >= 1, number <= calendars.count else { return false }
-        pickedCalendarID = calendars[number - 1].calendarIdentifier
-        resolveTarget()
-        return true
     }
 
     private func resolveTarget() {
@@ -131,45 +165,78 @@ final class InputModel: ObservableObject {
             .map(CalendarInfo.init)
     }
 
-    private func scheduleContextRefresh() {
-        contextTask?.cancel()
-        guard accessGranted, !text.isEmpty, let start = parsed.start, let end = parsed.end else {
-            context = []
-            return
+    // MARK: - Day browsing (↓ then ←/→, ↑ back)
+
+    func handleArrow(_ key: ArrowKey) -> Bool {
+        switch key {
+        case .down:
+            if browsedDay == nil {
+                browsedDay = Calendar.current.startOfDay(for: displayDay)
+                scheduleTimelineRefresh()
+            }
+            return true
+        case .up:
+            guard browsedDay != nil else { return false }
+            browsedDay = nil
+            scheduleTimelineRefresh()
+            return true
+        case .left, .right:
+            guard let day = browsedDay else { return false }
+            browsedDay = Calendar.current.date(byAdding: .day, value: key == .right ? 1 : -1, to: day)
+            scheduleTimelineRefresh()
+            return true
         }
-        let isAllDay = parsed.isAllDay
-        contextTask = Task {
+    }
+
+    // MARK: - Timeline
+
+    private func scheduleTimelineRefresh() {
+        timelineTask?.cancel()
+        guard accessGranted else { return }
+        let day = displayDay
+        let entry = parsed
+        let typing = !text.isEmpty
+        timelineTask = Task {
             try? await Task.sleep(nanoseconds: 150_000_000)
             guard !Task.isCancelled else { return }
-            let events = CalendarService.shared.eventsOnDay(of: start)
+            let events = CalendarService.shared.eventsOnDay(of: day)
             guard !Task.isCancelled else { return }
-            context = Self.buildContext(events: events, start: start, end: end, isAllDay: isAllDay)
+            timeline = Self.buildTimeline(events: events, day: day, entry: typing ? entry : nil)
         }
     }
 
-    /// Conflicts plus up to two neighbors on each side, in time order.
-    /// All-day events never conflict with anything — they appear as plain context,
-    /// and an all-day entry being created conflicts with nothing.
-    private static func buildContext(events: [EKEvent], start: Date, end: Date,
-                                     isAllDay: Bool) -> [ContextEvent] {
+    /// All-day rows first, then timed rows (capped to the 8 nearest the focus
+    /// time). Conflicts marked only for a timed entry on the displayed day —
+    /// all-day events never conflict in either direction.
+    private static func buildTimeline(events: [EKEvent], day: Date, entry: ParsedEntry?) -> [ContextEvent] {
+        let calendar = Calendar.current
+        var conflictWindow: (start: Date, end: Date)?
+        if let entry, !entry.isAllDay, let start = entry.start, let end = entry.end,
+           calendar.isDate(start, inSameDayAs: day) {
+            conflictWindow = (start, end)
+        }
+
         let allDayRows = events.filter(\.isAllDay).prefix(2)
             .map { ContextEvent($0, conflict: false) }
-        let timed = events.filter { !$0.isAllDay }
 
-        if isAllDay {
-            return allDayRows + timed.prefix(4).map { ContextEvent($0, conflict: false) }
+        var timed = events.filter { !$0.isAllDay }
+        if timed.count > 8 {
+            let focus = conflictWindow?.start
+                ?? (calendar.isDateInToday(day) ? Date() : calendar.startOfDay(for: day).addingTimeInterval(9 * 3600))
+            timed = timed
+                .sorted { abs($0.startDate.timeIntervalSince(focus)) < abs($1.startDate.timeIntervalSince(focus)) }
+                .prefix(8)
+                .sorted { $0.startDate < $1.startDate }
         }
-        let conflicts = timed.filter { $0.startDate < end && $0.endDate > start }
-        let before = timed.filter { $0.endDate <= start }.suffix(2)
-        let after = timed.filter { $0.startDate >= end }.prefix(2)
-        let rows = allDayRows
-            + before.map { ContextEvent($0, conflict: false) }
-            + conflicts.prefix(3).map { ContextEvent($0, conflict: true) }
-            + after.map { ContextEvent($0, conflict: false) }
-        // Conflicts always make the cut; the panel never grows past 6 rows.
-        return Array(rows.sorted { $0.isConflict && !$1.isConflict }.prefix(6))
-            .sorted { $0.start < $1.start }
+        let timedRows = timed.map { event in
+            ContextEvent(event, conflict: conflictWindow.map {
+                event.startDate < $0.end && event.endDate > $0.start
+            } ?? false)
+        }
+        return allDayRows + timedRows
     }
+
+    // MARK: - Actions
 
     func cancel() {
         onDismiss?()
@@ -191,7 +258,6 @@ final class InputModel: ObservableObject {
                 // Stay open for the next entry — esc closes.
                 text = ""
                 status = .idle
-                loadToday()
             } catch {
                 status = .error(error.localizedDescription)
             }
