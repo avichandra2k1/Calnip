@@ -4,6 +4,19 @@ import SwiftUI
 /// Borderless panel that can take keyboard focus without activating the app.
 final class FloatingPanel: NSPanel {
     override var canBecomeKey: Bool { true }
+
+    /// ⌘1–9 quick calendar pick; returns true if handled.
+    var onCommandDigit: ((Int) -> Bool)?
+
+    override func performKeyEquivalent(with event: NSEvent) -> Bool {
+        if event.modifierFlags.contains(.command),
+           let char = event.charactersIgnoringModifiers?.first,
+           let digit = char.wholeNumberValue, (1...9).contains(digit),
+           onCommandDigit?(digit) == true {
+            return true
+        }
+        return super.performKeyEquivalent(with: event)
+    }
 }
 
 @MainActor
@@ -41,6 +54,9 @@ final class PanelController: NSObject, NSWindowDelegate {
         panel.contentViewController = hosting
 
         model.onDismiss = { [weak self] in self?.hide() }
+        panel.onCommandDigit = { [weak self] digit in
+            self?.model.pickCalendar(digit) ?? false
+        }
 
         // Keep the top edge pinned as the panel grows/shrinks with content.
         NotificationCenter.default.addObserver(
@@ -60,7 +76,7 @@ final class PanelController: NSObject, NSWindowDelegate {
 
     func show() {
         model.reset()
-        model.loadCalendarName()
+        model.prepare()
 
         let screen = NSScreen.main ?? NSScreen.screens.first
         if let frame = screen?.visibleFrame {
