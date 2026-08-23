@@ -750,6 +750,7 @@ struct PanelView: View {
         let calendar = Calendar.current
         if calendar.isDateInToday(start) { return "Today" }
         if calendar.isDateInTomorrow(start) { return "Tomorrow" }
+        if calendar.isDateInYesterday(start) { return "Yesterday" }
         return start.formatted(.dateTime.weekday(.wide).month(.abbreviated).day())
     }
 

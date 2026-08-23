@@ -219,12 +219,26 @@ final class InputModel: ObservableObject {
         }
     }
 
-    /// Browsing tomorrow means the entry is probably for tomorrow — keep the
-    /// text's day token in step (only tod/tom are expressible).
+    /// Browsing a day means the entry is probably for that day — keep the
+    /// text's day token in step: tom / yest / "aug 27" for anything further out.
     private func syncDayToken(to day: Date) {
         let calendar = Calendar.current
-        let wantsTomorrow = calendar.isDateInTomorrow(day)
-        guard wantsTomorrow || calendar.isDateInToday(day) else { return }
+        let today = calendar.startOfDay(for: Date())
+        let target = calendar.startOfDay(for: day)
+        let delta = calendar.dateComponents([.day], from: today, to: target).day ?? 0
+
+        let replacement: String?
+        switch delta {
+        case 0: replacement = nil
+        case 1: replacement = "tom"
+        case -1: replacement = "yest"
+        case 2...365:
+            let comps = calendar.dateComponents([.month, .day], from: target)
+            let month = calendar.shortMonthSymbols[(comps.month ?? 1) - 1].lowercased()
+            replacement = "\(month) \(comps.day ?? 1)"
+        default:
+            replacement = nil   // deeper past isn't expressible — clear the token
+        }
 
         var newText = text
         if let token = parsed.tokens.first(where: {
@@ -235,8 +249,8 @@ final class InputModel: ObservableObject {
                 .replacingOccurrences(of: #"\s+"#, with: " ", options: .regularExpression)
                 .trimmingCharacters(in: .whitespaces)
         }
-        if wantsTomorrow {
-            newText = newText.isEmpty ? "tom" : "\(newText) tom"
+        if let replacement {
+            newText = newText.isEmpty ? replacement : "\(newText) \(replacement)"
         }
         guard newText != text else { return }
         suppressTextSideEffects = true

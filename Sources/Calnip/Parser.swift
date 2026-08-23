@@ -10,19 +10,26 @@ enum RecurrenceSpec: Equatable {
 
     var label: String {
         let names = Calendar.current.weekdaySymbols
+        func every(_ unit: String, _ n: Int) -> String {
+            switch n {
+            case 1: return "Every \(unit)"
+            case 2: return "Every other \(unit)"
+            default: return "Every \(n) \(unit)s"
+            }
+        }
         switch self {
-        case .daily(interval: 1): return "Every day"
-        case .daily: return "Every other day"
+        case .daily(let n): return every("day", n)
         case .weekdays: return "Every weekday"
-        case .week(interval: 1): return "Every week"
-        case .week: return "Every other week"
-        case .weekly(let weekday, let interval):
+        case .week(let n): return every("week", n)
+        case .weekly(let weekday, let n):
             let name = names[weekday - 1]
-            return interval == 1 ? "Every \(name)" : "Every other \(name)"
-        case .monthly(interval: 1): return "Every month"
-        case .monthly: return "Every other month"
-        case .yearly(interval: 1): return "Every year"
-        case .yearly: return "Every other year"
+            switch n {
+            case 1: return "Every \(name)"
+            case 2: return "Every other \(name)"
+            default: return "Every \(n) weeks on \(name)"
+            }
+        case .monthly(let n): return every("month", n)
+        case .yearly(let n): return every("year", n)
         }
     }
 }
@@ -78,13 +85,36 @@ enum Parser {
         pattern: #"(?i)\bat\s+(\d{1,2})(?::(\d{2}))?(?![\w:-])"#
     )
 
-    private static let dayRegex = try! NSRegularExpression(
-        pattern: #"(?i)\b(?:(tod(?:ay)?)|(tom(?:orrow)?))\b"#
+    // Day phrases, most specific first. "till/until" prefixes are excluded so
+    // recurrence-end phrases keep their words.
+    private static let dayAfterRegex = try! NSRegularExpression(
+        pattern: #"(?i)\b(?:the\s+)?day\s+after(?:\s+tom(?:orrow)?)?\b"#
+    )
+    private static let inDaysRegex = try! NSRegularExpression(
+        pattern: #"(?i)\b(?:in\s+(\d{1,2})\s+(day|week)s?|(\d{1,2})\s+(day|week)s?\s+from\s+(?:now|today))\b"#
+    )
+    private static let nextUnitRegex = try! NSRegularExpression(
+        pattern: #"(?i)\bnext\s+(week|month)\b"#
+    )
+    private static let monthDayRegex = try! NSRegularExpression(
+        pattern: #"(?i)(?<!till\s)(?<!until\s)(?<!til\s)\b(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\s+(\d{1,2})(?:st|nd|rd|th)?\b(?!\s*(?:am|pm|:))"#
+    )
+    private static let dayMonthRegex = try! NSRegularExpression(
+        pattern: #"(?i)(?<!till\s)(?<!until\s)(?<!til\s)\b(\d{1,2})(?:st|nd|rd|th)?\s+(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\b"#
+    )
+    private static let relWordRegex = try! NSRegularExpression(
+        pattern: #"(?i)\b(?:(tod(?:ay)?|tonight)|(tom(?:orrow)?)|(yest(?:erday)?))\b"#
+    )
+    private static let weekdayDayRegex = try! NSRegularExpression(
+        pattern: #"(?i)(?<!till\s)(?<!until\s)(?<!til\s)(?<!the\s)(?<!a\s)\b(next\s+)?(monday|tuesday|wednesday|thursday|friday|saturday|sunday|mon|tues|tue|wed|thurs|thur|thu|fri|sat|sun)\b"#
+    )
+    private static let ordinalRegex = try! NSRegularExpression(
+        pattern: #"(?i)(?<!till\s)(?<!until\s)(?<!til\s)\b(\d{1,2})(?:st|nd|rd|th)\b"#
     )
 
-    // "every day", "everyday", "everyd" (partial), "every other monday"
+    // "every day", "everyday", "everyd" (partial), "every other monday", "every 2 days"
     private static let repeatRegex = try! NSRegularExpression(
-        pattern: #"(?i)\bevery\s*(other\s+)?([a-z]+)\b"#
+        pattern: #"(?i)\bevery\s*(other\s+|\d{1,2}\s+)?([a-z]+)\b"#
     )
 
     // "till 29 nov" / "until nov 29th"
@@ -208,19 +238,22 @@ enum Parser {
             }
         }
 
-        // --- day ---
-        for m in dayRegex.matches(in: input, range: full) where !overlapsExisting(m.range) {
-            let offset = m.range(at: 2).location == NSNotFound ? 0 : 1
-            append(.day(offset: offset), m.range)
-            break
-        }
-
-        // --- recurrence ---
+        // --- recurrence (before day words so "every tuesday" isn't a day token) ---
         for m in repeatRegex.matches(in: input, range: full) where !overlapsExisting(m.range) {
             let word = (group(m, 2) ?? "").lowercased()
             guard let make = resolveUnit(word) else { continue }
-            append(.repeatRule(make(group(m, 1) == nil ? 1 : 2)), m.range)
+            var interval = 1
+            if let modifier = group(m, 1)?.trimmingCharacters(in: .whitespaces).lowercased() {
+                interval = modifier == "other" ? 2 : max(Int(modifier) ?? 1, 1)
+            }
+            append(.repeatRule(make(interval)), m.range)
             break
+        }
+
+        // --- day ---
+        if let (offset, range) = scanDay(input, ns: ns, full: full, now: now,
+                                         calendar: calendar, overlaps: overlapsExisting) {
+            append(.day(offset: offset), range)
         }
 
         entry.tokens = tokens
@@ -299,6 +332,78 @@ enum Parser {
             .trimmingCharacters(in: .whitespacesAndNewlines)
 
         return entry
+    }
+
+    // MARK: - Day phrases
+
+    /// First day phrase found, as an offset in days from today.
+    private static func scanDay(_ input: String, ns: NSString, full: NSRange, now: Date,
+                                calendar: Calendar, overlaps: (NSRange) -> Bool) -> (Int, NSRange)? {
+        let base = calendar.startOfDay(for: now)
+        func group(_ m: NSTextCheckingResult, _ i: Int) -> String? {
+            let r = m.range(at: i)
+            return r.location == NSNotFound ? nil : ns.substring(with: r)
+        }
+        func offset(to date: Date) -> Int {
+            calendar.dateComponents([.day], from: base, to: calendar.startOfDay(for: date)).day ?? 0
+        }
+        func nextMatch(_ comps: DateComponents, after: Date) -> Date? {
+            calendar.nextDate(after: after, matching: comps, matchingPolicy: .nextTime)
+        }
+
+        // "day after", "day after tomorrow"
+        if let m = dayAfterRegex.firstMatch(in: input, range: full), !overlaps(m.range) {
+            return (2, m.range)
+        }
+        // "in 2 days", "3 weeks from now"
+        if let m = inDaysRegex.firstMatch(in: input, range: full), !overlaps(m.range) {
+            let n = Int(group(m, 1) ?? group(m, 3) ?? "") ?? 0
+            let unit = (group(m, 2) ?? group(m, 4) ?? "day").lowercased()
+            return (unit.hasPrefix("week") ? n * 7 : n, m.range)
+        }
+        // "next week", "next month"
+        if let m = nextUnitRegex.firstMatch(in: input, range: full), !overlaps(m.range) {
+            if (group(m, 1) ?? "").lowercased() == "week" { return (7, m.range) }
+            if let next = calendar.date(byAdding: .month, value: 1, to: base) {
+                return (offset(to: next), m.range)
+            }
+        }
+        // "aug 27", "27 aug" — next occurrence (a past date rolls to next year)
+        for regex in [monthDayRegex, dayMonthRegex] {
+            guard let m = regex.firstMatch(in: input, range: full), !overlaps(m.range) else { continue }
+            let monthWord = (group(m, regex === monthDayRegex ? 1 : 2) ?? "").lowercased()
+            let dayNumber = Int(group(m, regex === monthDayRegex ? 2 : 1) ?? "") ?? 0
+            if (1...31).contains(dayNumber),
+               let month = monthNames.first(where: { $0.key.hasPrefix(monthWord) })?.value,
+               let date = nextMatch(DateComponents(month: month, day: dayNumber),
+                                    after: base.addingTimeInterval(-1)) {
+                return (offset(to: date), m.range)
+            }
+        }
+        // "tod", "tonight", "tom", "yest"
+        if let m = relWordRegex.firstMatch(in: input, range: full), !overlaps(m.range) {
+            if group(m, 1) != nil { return (0, m.range) }
+            if group(m, 2) != nil { return (1, m.range) }
+            return (-1, m.range)
+        }
+        // "tuesday" → next occurring (today counts); "next tuesday" → after today
+        if let m = weekdayDayRegex.firstMatch(in: input, range: full), !overlaps(m.range) {
+            let word = (group(m, 2) ?? "").lowercased()
+            if let weekday = weekdayNames.first(where: { $0.key.hasPrefix(word) })?.value {
+                let after = group(m, 1) == nil ? base.addingTimeInterval(-1)
+                                              : base.addingTimeInterval(86399)
+                if let date = nextMatch(DateComponents(weekday: weekday), after: after) {
+                    return (offset(to: date), m.range)
+                }
+            }
+        }
+        // "27th" → next 27th
+        if let m = ordinalRegex.firstMatch(in: input, range: full), !overlaps(m.range),
+           let dayNumber = Int(group(m, 1) ?? ""), (1...31).contains(dayNumber),
+           let date = nextMatch(DateComponents(day: dayNumber), after: base.addingTimeInterval(-1)) {
+            return (offset(to: date), m.range)
+        }
+        return nil
     }
 
     // MARK: - Until
