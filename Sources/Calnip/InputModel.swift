@@ -222,6 +222,14 @@ final class InputModel: ObservableObject {
         }
     }
 
+    /// Click on an event block.
+    func selectEvent(id: String) {
+        selectedEventID = id
+        if browsedDay == nil {
+            browsedDay = Calendar.current.startOfDay(for: timeline.day)
+        }
+    }
+
     private func exitBrowse() {
         selectedEventID = nil
         browsedDay = nil
