@@ -159,7 +159,7 @@ final class InputModel: ObservableObject {
 
     private func loadSlots() {
         let stored = Settings.slotIDs
-        let ids = stored.isEmpty ? calendars.prefix(6).map(\.id) : stored
+        let ids = stored.isEmpty ? calendars.prefix(5).map(\.id) : stored
         slotCalendars = ids.enumerated().compactMap { index, id in
             guard !id.isEmpty, let info = calendars.first(where: { $0.id == id }) else { return nil }
             return SlotCalendar(number: index + 1, info: info)

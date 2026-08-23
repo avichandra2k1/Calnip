@@ -49,7 +49,7 @@ struct SettingsView: View {
             } header: {
                 Text("Calendar shortcuts")
             } footer: {
-                Text("The first six calendars are assigned automatically until you customize.")
+                Text("The first five calendars are assigned automatically until you customize.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
@@ -76,7 +76,7 @@ struct SettingsView: View {
         Binding(
             get: {
                 if slotsRaw.isEmpty {
-                    return number <= 6 && number - 1 < calendars.count ? calendars[number - 1].id : ""
+                    return number <= 5 && number - 1 < calendars.count ? calendars[number - 1].id : ""
                 }
                 let slots = slotsRaw.components(separatedBy: ",")
                 return number - 1 < slots.count ? slots[number - 1] : ""
@@ -84,7 +84,7 @@ struct SettingsView: View {
             set: { newValue in
                 var slots: [String]
                 if slotsRaw.isEmpty {
-                    slots = (0..<9).map { $0 < 6 && $0 < calendars.count ? calendars[$0].id : "" }
+                    slots = (0..<9).map { $0 < 5 && $0 < calendars.count ? calendars[$0].id : "" }
                 } else {
                     slots = slotsRaw.components(separatedBy: ",")
                 }

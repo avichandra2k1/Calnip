@@ -501,9 +501,7 @@ struct PanelView: View {
         let editCalendar = model.calendars.first { $0.id == model.editCalendarID }
         return ZStack(alignment: .leading) {
             RoundedRectangle(cornerRadius: 7)
-                .fill(.thickMaterial)
-            RoundedRectangle(cornerRadius: 7)
-                .fill(Color.accentColor.opacity(0.1))
+                .fill(Color.accentColor.opacity(0.12))
             RoundedRectangle(cornerRadius: 7)
                 .strokeBorder(Color.accentColor.opacity(0.7), lineWidth: 1)
             HStack(spacing: 10) {
@@ -684,12 +682,13 @@ struct PanelView: View {
         .padding(.vertical, 9)
     }
 
-    /// ⌘-slot index — one row up to 6 calendars, two aligned rows beyond that.
-    /// Assignments are configurable in Settings.
+    /// ⌘-slot index — one row up to 5 calendars, else 4 + the rest on a second
+    /// aligned row. Assignments are configurable in Settings.
     private var calendarIndex: some View {
         let slots = model.slotCalendars
-        let firstRow = Array(slots.prefix(6))
-        let secondRow = Array(slots.dropFirst(6))
+        let split = slots.count <= 5 ? slots.count : 4
+        let firstRow = Array(slots.prefix(split))
+        let secondRow = Array(slots.dropFirst(split))
         return Grid(alignment: .leading, horizontalSpacing: 14, verticalSpacing: 5) {
             GridRow {
                 ForEach(firstRow) { calendarIndexItem($0) }
