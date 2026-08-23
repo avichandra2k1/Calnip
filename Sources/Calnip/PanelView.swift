@@ -320,7 +320,7 @@ struct PanelView: View {
                     previewBlock(height: height)
                         .frame(width: contentWidth - 4, height: height)
                         .offset(x: contentX, y: y)
-                        .zIndex(2)
+                        .zIndex(5)   // the entry being typed always wins overlaps
                 }
 
                 // Now line.
@@ -411,10 +411,13 @@ struct PanelView: View {
     private func previewBlock(height: CGFloat) -> some View {
         let compact = height < 36
         return ZStack(alignment: .topLeading) {
+            // Opaque backing so overlapped blocks can't bleed through the ghost.
             RoundedRectangle(cornerRadius: 7)
-                .fill(Color.accentColor.opacity(0.14))
+                .fill(.thickMaterial)
             RoundedRectangle(cornerRadius: 7)
-                .strokeBorder(Color.accentColor.opacity(0.8),
+                .fill(Color.accentColor.opacity(0.2))
+            RoundedRectangle(cornerRadius: 7)
+                .strokeBorder(Color.accentColor.opacity(0.9),
                               style: StrokeStyle(lineWidth: 1.2, dash: [4, 3]))
             Group {
                 if compact {
