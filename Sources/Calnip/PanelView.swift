@@ -199,28 +199,40 @@ struct PanelView: View {
         let allDay = model.timeline.rows.filter(\.isAllDay)
         let timed = model.timeline.rows.filter { !$0.isAllDay }
 
-        // Hour range: generous defaults, stretched to cover events and the preview.
-        var firstHour = 8
-        var lastHour = 21
-        func include(_ start: Date, _ end: Date) {
-            firstHour = min(firstHour, calendar.component(.hour, from: start))
-            let endHour = Int(ceil(end.timeIntervalSince(dayStart) / 3600))
-            lastHour = max(lastHour, min(endHour + 1, 24))
+        // Full 12 AM – 11:59 PM day. Hours near events / the now line / the
+        // typed preview (±1h) get full height; blank stretches compress.
+        var active = Set<Int>()
+        func mark(_ start: Date, _ end: Date) {
+            let from = max(Int(start.timeIntervalSince(dayStart) / 3600) - 1, 0)
+            let to = min(Int(ceil(end.timeIntervalSince(dayStart) / 3600)) + 1, 24)
+            guard from < 24 else { return }
+            for hour in from..<max(to, from + 1) { active.insert(hour) }
         }
-        for event in timed { include(event.start, min(event.end, dayStart.addingTimeInterval(86400))) }
+        for event in timed { mark(event.start, min(event.end, dayStart.addingTimeInterval(86400))) }
         if timedPreview, let start = model.parsed.start, let end = model.parsed.end {
-            include(start, min(end, dayStart.addingTimeInterval(86400)))
+            mark(start, min(end, dayStart.addingTimeInterval(86400)))
         }
-        let hours = Array(firstHour...lastHour)
-        let totalHeight = CGFloat(lastHour - firstHour) * hourHeight
+        if isToday { mark(Date(), Date()) }
+        if active.isEmpty { for hour in 8..<19 { active.insert(hour) } }
+
+        let compressedHeight: CGFloat = 10
+        let heights = (0..<24).map { active.contains($0) ? hourHeight : compressedHeight }
+        var accumulated: [CGFloat] = [0]
+        for height in heights { accumulated.append(accumulated.last! + height) }
+        let totalHeight = accumulated[24]
+        // Labels/lines only at the edges of full-height regions.
+        let labeledHours = (0...24).filter { hour in
+            hour == 0 || hour == 24 || active.contains(hour) || active.contains(hour - 1)
+        }
 
         func yOffset(_ date: Date) -> CGFloat {
-            (date.timeIntervalSince(dayStart) / 3600 - Double(firstHour)) * hourHeight
+            let t = min(max(date.timeIntervalSince(dayStart) / 3600, 0), 24)
+            let whole = min(Int(t), 23)
+            return accumulated[whole] + CGFloat(t - Double(whole)) * heights[whole]
         }
 
         let placed = Self.layoutColumns(timed)
         let now = Date()
-        let nowVisible = isToday && yOffset(now) >= 0 && yOffset(now) <= totalHeight
 
         return VStack(alignment: .leading, spacing: 6) {
             timelineHeader(day: day, isToday: isToday)
@@ -232,46 +244,47 @@ struct PanelView: View {
                     ZStack(alignment: .topLeading) {
                         // Scroll rail — real layout, so scrollTo has stable targets.
                         VStack(spacing: 0) {
-                            ForEach(hours.dropLast(), id: \.self) { hour in
+                            ForEach(0..<24, id: \.self) { hour in
                                 Color.clear
-                                    .frame(height: hourHeight)
+                                    .frame(height: heights[hour])
                                     .id("hour-\(hour)")
                             }
                         }
-                        gridCanvas(hours: hours, totalHeight: totalHeight, yOffset: yOffset,
-                                   placed: placed, timedPreview: timedPreview,
-                                   nowVisible: nowVisible, now: now, isToday: isToday)
+                        gridCanvas(labeledHours: labeledHours, accumulated: accumulated,
+                                   yOffset: yOffset, placed: placed, timedPreview: timedPreview,
+                                   nowVisible: isToday, now: now, isToday: isToday)
                     }
                     .frame(height: totalHeight)
-                    .padding(.top, 8)   // keep the first hour label from clipping
+                    .padding(.top, 8)
+                    .padding(.bottom, 16)   // last label clear of the footer
                 }
-                .frame(height: min(totalHeight, maxTimelineHeight))
+                .frame(height: min(totalHeight + 24, maxTimelineHeight))
                 .onAppear {
-                    scrollToFocus(proxy, hours: hours, isToday: isToday, now: now)
+                    scrollToFocus(proxy, isToday: isToday, now: now)
                 }
                 .onChange(of: model.timeline.day) { _, _ in
-                    scrollToFocus(proxy, hours: hours, isToday: isToday, now: now)
+                    scrollToFocus(proxy, isToday: isToday, now: now)
                 }
                 .onChange(of: model.selectedEventID) { _, id in
                     guard let id, let event = model.timeline.rows.first(where: { $0.id == id }),
                           !event.isAllDay else { return }
-                    scrollToHour(proxy, Calendar.current.component(.hour, from: event.start), hours: hours)
+                    scrollToHour(proxy, Calendar.current.component(.hour, from: event.start))
                 }
                 .onChange(of: timedPreview ? model.parsed.start : nil) { _, start in
                     guard let start else { return }
-                    scrollToHour(proxy, Calendar.current.component(.hour, from: start), hours: hours)
+                    scrollToHour(proxy, Calendar.current.component(.hour, from: start))
                 }
             }
         }
     }
 
-    private func scrollToFocus(_ proxy: ScrollViewProxy, hours: [Int], isToday: Bool, now: Date) {
+    private func scrollToFocus(_ proxy: ScrollViewProxy, isToday: Bool, now: Date) {
         let hour = isToday ? Calendar.current.component(.hour, from: now) : 9
-        scrollToHour(proxy, hour, hours: hours, animated: false)
+        scrollToHour(proxy, hour, animated: false)
     }
 
-    private func scrollToHour(_ proxy: ScrollViewProxy, _ hour: Int, hours: [Int], animated: Bool = true) {
-        let target = max(hours.first ?? 0, min(hour, (hours.last ?? 24) - 1))
+    private func scrollToHour(_ proxy: ScrollViewProxy, _ hour: Int, animated: Bool = true) {
+        let target = max(0, min(hour, 23))
         if animated {
             withAnimation(.easeOut(duration: 0.15)) { proxy.scrollTo("hour-\(target)", anchor: .center) }
         } else {
@@ -279,7 +292,8 @@ struct PanelView: View {
         }
     }
 
-    private func gridCanvas(hours: [Int], totalHeight: CGFloat, yOffset: @escaping (Date) -> CGFloat,
+    private func gridCanvas(labeledHours: [Int], accumulated: [CGFloat],
+                            yOffset: @escaping (Date) -> CGFloat,
                             placed: [Placed], timedPreview: Bool,
                             nowVisible: Bool, now: Date, isToday: Bool) -> some View {
         GeometryReader { geo in
@@ -287,8 +301,8 @@ struct PanelView: View {
             let contentWidth = geo.size.width - contentX - gridTrailingInset
             ZStack(alignment: .topLeading) {
                 // Hour lines + right-aligned gutter labels.
-                ForEach(hours, id: \.self) { hour in
-                    let y = CGFloat(hour - (hours.first ?? 0)) * hourHeight
+                ForEach(labeledHours, id: \.self) { hour in
+                    let y = accumulated[hour]
                     Rectangle()
                         .fill(.quaternary.opacity(0.35))
                         .frame(height: 0.5)

@@ -298,7 +298,9 @@ final class InputModel: ObservableObject {
     private func refreshTimeline(debounce: Bool = false) {
         timelineTask?.cancel()
         guard accessGranted else { return }
-        let day = displayDay
+        // Normalized so the published day only changes when the calendar day
+        // does — a raw parsed date would retrigger day-change scrolling.
+        let day = Calendar.current.startOfDay(for: displayDay)
         let entry = parsed
         let typing = !text.isEmpty
         timelineTask = Task {
