@@ -21,6 +21,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         newEvent.keyEquivalentModifierMask = .option
         newEvent.target = self
         menu.addItem(newEvent)
+        let settings = NSMenuItem(title: "Settings…", action: #selector(openSettings), keyEquivalent: ",")
+        settings.target = self
+        menu.addItem(settings)
         menu.addItem(.separator())
         let quit = NSMenuItem(title: "Quit Calnip", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
         menu.addItem(quit)
@@ -42,5 +45,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     @objc private func togglePanel() {
         panelController.toggle()
+    }
+
+    @objc private func openSettings() {
+        SettingsWindowController.shared.show()
     }
 }

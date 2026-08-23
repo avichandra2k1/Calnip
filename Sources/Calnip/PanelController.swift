@@ -7,12 +7,20 @@ final class FloatingPanel: NSPanel {
 
     /// ⌘1–9 quick calendar pick; returns true if handled.
     var onCommandDigit: ((Int) -> Bool)?
+    /// ⌘, opens settings.
+    var onCommandComma: (() -> Void)?
 
     override func performKeyEquivalent(with event: NSEvent) -> Bool {
-        if event.modifierFlags.contains(.command),
-           let char = event.charactersIgnoringModifiers?.first,
-           let digit = char.wholeNumberValue, (1...9).contains(digit),
+        guard event.modifierFlags.contains(.command),
+              let char = event.charactersIgnoringModifiers?.first else {
+            return super.performKeyEquivalent(with: event)
+        }
+        if let digit = char.wholeNumberValue, (1...9).contains(digit),
            onCommandDigit?(digit) == true {
+            return true
+        }
+        if char == "," {
+            onCommandComma?()
             return true
         }
         return super.performKeyEquivalent(with: event)
@@ -56,6 +64,10 @@ final class PanelController: NSObject, NSWindowDelegate {
         model.onDismiss = { [weak self] in self?.hide() }
         panel.onCommandDigit = { [weak self] digit in
             self?.model.pickCalendar(digit) ?? false
+        }
+        panel.onCommandComma = { [weak self] in
+            self?.hide()
+            SettingsWindowController.shared.show()
         }
 
         // Keep the top edge pinned as the panel grows/shrinks with content.

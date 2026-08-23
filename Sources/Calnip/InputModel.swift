@@ -3,6 +3,20 @@ import Combine
 import EventKit
 import SwiftUI
 
+enum Settings {
+    static let viewModeKey = "viewMode"
+    static let showHintsKey = "showHints"
+    static let defaultDurationKey = "defaultDurationMinutes"
+
+    static var isExpanded: Bool {
+        UserDefaults.standard.string(forKey: viewModeKey) ?? "expanded" == "expanded"
+    }
+    static var defaultDuration: Int {
+        let value = UserDefaults.standard.integer(forKey: defaultDurationKey)
+        return value > 0 ? value : 60
+    }
+}
+
 struct CalendarInfo: Equatable, Identifiable {
     let id: String
     let name: String
@@ -20,8 +34,19 @@ struct ContextEvent: Equatable, Identifiable {
     let title: String
     let start: Date
     let end: Date
+    let isAllDay: Bool
     let isConflict: Bool
     let color: Color
+
+    init(_ event: EKEvent, conflict: Bool) {
+        id = event.eventIdentifier ?? UUID().uuidString
+        title = event.title ?? "Untitled"
+        start = event.startDate
+        end = event.endDate
+        isAllDay = event.isAllDay
+        isConflict = conflict
+        color = Color(nsColor: event.calendar?.color ?? .controlAccentColor)
+    }
 }
 
 @MainActor
@@ -35,7 +60,7 @@ final class InputModel: ObservableObject {
 
     @Published var text: String = "" {
         didSet {
-            parsed = Parser.parse(text)
+            parsed = Parser.parse(text, defaultDurationMinutes: Settings.defaultDuration)
             resolveTarget()
             scheduleContextRefresh()
         }
@@ -45,6 +70,7 @@ final class InputModel: ObservableObject {
     @Published private(set) var target: CalendarInfo?
     @Published private(set) var queryUnmatched = false
     @Published private(set) var context: [ContextEvent] = []
+    @Published private(set) var todayEvents: [ContextEvent] = []
 
     private var accessGranted = false
     private var pickedCalendarID: String?
@@ -68,6 +94,9 @@ final class InputModel: ObservableObject {
         Task {
             accessGranted = await CalendarService.shared.requestAccess()
             resolveTarget()
+            guard accessGranted else { return }
+            todayEvents = CalendarService.shared.eventsOnDay(of: Date())
+                .map { ContextEvent($0, conflict: false) }
         }
     }
 
@@ -95,31 +124,35 @@ final class InputModel: ObservableObject {
             context = []
             return
         }
+        let isAllDay = parsed.isAllDay
         contextTask = Task {
             try? await Task.sleep(nanoseconds: 150_000_000)
             guard !Task.isCancelled else { return }
             let events = CalendarService.shared.eventsOnDay(of: start)
             guard !Task.isCancelled else { return }
-            context = Self.buildContext(events: events, start: start, end: end)
+            context = Self.buildContext(events: events, start: start, end: end, isAllDay: isAllDay)
         }
     }
 
     /// Conflicts plus up to two neighbors on each side, in time order.
-    private static func buildContext(events: [EKEvent], start: Date, end: Date) -> [ContextEvent] {
-        func row(_ event: EKEvent, conflict: Bool) -> ContextEvent {
-            ContextEvent(
-                id: event.eventIdentifier ?? UUID().uuidString,
-                title: event.title ?? "Untitled",
-                start: event.startDate, end: event.endDate,
-                isConflict: conflict,
-                color: Color(nsColor: event.calendar?.color ?? .controlAccentColor))
+    /// All-day events never conflict with anything — they appear as plain context,
+    /// and an all-day entry being created conflicts with nothing.
+    private static func buildContext(events: [EKEvent], start: Date, end: Date,
+                                     isAllDay: Bool) -> [ContextEvent] {
+        let allDayRows = events.filter(\.isAllDay).prefix(2)
+            .map { ContextEvent($0, conflict: false) }
+        let timed = events.filter { !$0.isAllDay }
+
+        if isAllDay {
+            return allDayRows + timed.prefix(4).map { ContextEvent($0, conflict: false) }
         }
-        let conflicts = events.filter { $0.startDate < end && $0.endDate > start }
-        let before = events.filter { $0.endDate <= start }.suffix(2)
-        let after = events.filter { $0.startDate >= end }.prefix(2)
-        return (before.map { row($0, conflict: false) }
-                + conflicts.prefix(3).map { row($0, conflict: true) }
-                + after.map { row($0, conflict: false) })
+        let conflicts = timed.filter { $0.startDate < end && $0.endDate > start }
+        let before = timed.filter { $0.endDate <= start }.suffix(2)
+        let after = timed.filter { $0.startDate >= end }.prefix(2)
+        return allDayRows
+            + before.map { ContextEvent($0, conflict: false) }
+            + conflicts.prefix(3).map { ContextEvent($0, conflict: true) }
+            + after.map { ContextEvent($0, conflict: false) }
     }
 
     func cancel() {
@@ -134,9 +167,9 @@ final class InputModel: ObservableObject {
         Task {
             do {
                 let calendar = try await CalendarService.shared.add(
-                    title: entry.title, start: start, end: end,
+                    title: entry.title, start: start, end: end, isAllDay: entry.isAllDay,
                     query: entry.calendarQuery, pickedID: pickedID,
-                    recurrence: entry.recurrence)
+                    recurrence: entry.recurrence, recurrenceEnd: entry.recurrenceEnd)
                 status = .saved(calendar: calendar.title)
                 try? await Task.sleep(nanoseconds: 750_000_000)
                 onDismiss?()
