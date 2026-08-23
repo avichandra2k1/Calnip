@@ -7,6 +7,7 @@ enum Settings {
     static let viewModeKey = "viewMode"
     static let showHintsKey = "showHints"
     static let defaultDurationKey = "defaultDurationMinutes"
+    static let defaultCalendarKey = "defaultCalendarID"
 
     static var isExpanded: Bool {
         UserDefaults.standard.string(forKey: viewModeKey) ?? "expanded" == "expanded"
@@ -71,6 +72,7 @@ final class InputModel: ObservableObject {
     @Published private(set) var queryUnmatched = false
     @Published private(set) var context: [ContextEvent] = []
     @Published private(set) var todayEvents: [ContextEvent] = []
+    @Published private(set) var calendars: [CalendarInfo] = []
 
     private var accessGranted = false
     private var pickedCalendarID: String?
@@ -95,9 +97,16 @@ final class InputModel: ObservableObject {
             accessGranted = await CalendarService.shared.requestAccess()
             resolveTarget()
             guard accessGranted else { return }
+            calendars = CalendarService.shared.writableCalendars.map(CalendarInfo.init)
             todayEvents = CalendarService.shared.eventsOnDay(of: Date())
                 .map { ContextEvent($0, conflict: false) }
         }
+    }
+
+    /// Click on a calendar row.
+    func pickCalendar(id: String) {
+        pickedCalendarID = id
+        resolveTarget()
     }
 
     /// ⌘1–9 → nth writable calendar (alphabetical).
@@ -149,10 +158,13 @@ final class InputModel: ObservableObject {
         let conflicts = timed.filter { $0.startDate < end && $0.endDate > start }
         let before = timed.filter { $0.endDate <= start }.suffix(2)
         let after = timed.filter { $0.startDate >= end }.prefix(2)
-        return allDayRows
+        let rows = allDayRows
             + before.map { ContextEvent($0, conflict: false) }
             + conflicts.prefix(3).map { ContextEvent($0, conflict: true) }
             + after.map { ContextEvent($0, conflict: false) }
+        // Conflicts always make the cut; the panel never grows past 6 rows.
+        return Array(rows.sorted { $0.isConflict && !$1.isConflict }.prefix(6))
+            .sorted { $0.start < $1.start }
     }
 
     func cancel() {

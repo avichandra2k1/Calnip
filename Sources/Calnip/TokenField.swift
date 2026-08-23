@@ -11,7 +11,7 @@ struct TokenField: NSViewRepresentable {
     var onSubmit: () -> Void
     var onCancel: () -> Void
 
-    static let font = NSFont.systemFont(ofSize: 22, weight: .regular)
+    static let font = NSFont.systemFont(ofSize: 24, weight: .regular)
 
     func makeCoordinator() -> Coordinator {
         Coordinator(self)

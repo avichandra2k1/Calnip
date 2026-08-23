@@ -43,10 +43,14 @@ final class CalendarService {
             ?? calendars.first { $0.title.lowercased().contains(q) }
     }
 
-    /// Resolution order: ">query" match, explicit ⌘-pick, last used, system default.
+    /// Resolution order: ">query" match, explicit pick, configured default
+    /// (Settings), last used, system default.
     func targetCalendar(query: String?, pickedID: String?) -> EKCalendar? {
         if let query, let matched = match(query) { return matched }
         if let pickedID, let picked = store.calendar(withIdentifier: pickedID) { return picked }
+        let configured = UserDefaults.standard.string(forKey: Settings.defaultCalendarKey)
+        if let configured, configured != "auto",
+           let calendar = store.calendar(withIdentifier: configured) { return calendar }
         if let lastID = UserDefaults.standard.string(forKey: Self.lastCalendarKey),
            let last = store.calendar(withIdentifier: lastID) { return last }
         return store.defaultCalendarForNewEvents
