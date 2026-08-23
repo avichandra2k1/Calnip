@@ -53,6 +53,7 @@ struct ContextEvent: Equatable, Identifiable {
     let isConflict: Bool
     let color: Color
     let calendarName: String
+    let calendarID: String
 
     init(_ event: EKEvent, conflict: Bool) {
         id = event.eventIdentifier ?? UUID().uuidString
@@ -63,6 +64,7 @@ struct ContextEvent: Equatable, Identifiable {
         isConflict = conflict
         color = Color(nsColor: event.calendar?.color ?? .controlAccentColor)
         calendarName = event.calendar?.title ?? ""
+        calendarID = event.calendar?.calendarIdentifier ?? ""
     }
 }
 
@@ -111,6 +113,8 @@ final class InputModel: ObservableObject {
     @Published private(set) var selectedEventID: String?
     @Published private(set) var editingEvent: ContextEvent?
     @Published var editText: String = ""
+    /// Target calendar while editing (⌘1–9 retargets the edited event).
+    @Published private(set) var editCalendarID: String?
     /// Where the timeline should center (a just-saved event); nil = now.
     @Published private(set) var focusDate: Date?
 
@@ -164,18 +168,21 @@ final class InputModel: ObservableObject {
 
     // MARK: - Calendar picking
 
-    /// ⌘1–9 → assigned slot.
+    /// ⌘1–9 → assigned slot. While editing, retargets the edited event instead.
     func pickCalendar(_ number: Int) -> Bool {
         guard let slot = slotCalendars.first(where: { $0.number == number }) else { return false }
-        pickedCalendarID = slot.info.id
-        resolveTarget()
+        pickCalendar(id: slot.info.id)
         return true
     }
 
     /// Click on a calendar in the footer index.
     func pickCalendar(id: String) {
-        pickedCalendarID = id
-        resolveTarget()
+        if editingEvent != nil {
+            editCalendarID = id
+        } else {
+            pickedCalendarID = id
+            resolveTarget()
+        }
     }
 
     private func resolveTarget() {
@@ -279,6 +286,7 @@ final class InputModel: ObservableObject {
     func beginEdit() {
         guard editingEvent == nil, let event = selectedEvent else { return }
         editingEvent = event
+        editCalendarID = event.calendarID
         editText = Self.editPhrase(for: event)
     }
 
@@ -303,27 +311,30 @@ final class InputModel: ObservableObject {
         let entry = Parser.parse(editText, now: event.start,
                                  defaultDurationMinutes: Settings.defaultDuration)
         guard !entry.title.isEmpty, let start = entry.start, let end = entry.end else { return }
+        let calendarID = editCalendarID
         Task {
             do {
                 try await CalendarService.shared.update(
                     eventID: event.id, title: entry.title, start: start, end: end,
-                    isAllDay: entry.isAllDay, calendarQuery: entry.calendarQuery)
-                editingEvent = nil
-                editText = ""
+                    isAllDay: entry.isAllDay, calendarQuery: entry.calendarQuery,
+                    calendarID: calendarID)
+                endEdit()
                 refreshTimeline()
-                NotificationCenter.default.post(name: .calnipFocusField, object: nil)
             } catch {
                 status = .error(error.localizedDescription)
-                editingEvent = nil
-                editText = ""
-                NotificationCenter.default.post(name: .calnipFocusField, object: nil)
+                endEdit()
             }
         }
     }
 
     func cancelEdit() {
+        endEdit()
+    }
+
+    private func endEdit() {
         editingEvent = nil
         editText = ""
+        editCalendarID = nil
         NotificationCenter.default.post(name: .calnipFocusField, object: nil)
     }
 

@@ -344,7 +344,7 @@ struct PanelView: View {
                     let height = max(yOffset(item.event.end) - y, 24)
                     if model.editingEvent?.id == item.event.id {
                         editBlock
-                            .frame(width: contentWidth, height: max(height, 38))
+                            .frame(width: contentWidth, height: max(height, 46))
                             .offset(x: contentX, y: y)
                             .zIndex(3)
                     } else {
@@ -496,28 +496,52 @@ struct PanelView: View {
         .allowsHitTesting(false)
     }
 
-    /// Inline NLP edit field styled like an accent block (⌘E).
+    /// Inline NLP edit field styled like an event block (⌘E).
     private var editBlock: some View {
-        ZStack(alignment: .leading) {
+        let editCalendar = model.calendars.first { $0.id == model.editCalendarID }
+        return ZStack(alignment: .leading) {
             RoundedRectangle(cornerRadius: 7)
-                .fill(Color.accentColor.opacity(0.12))
+                .fill(.thickMaterial)
             RoundedRectangle(cornerRadius: 7)
-                .strokeBorder(Color.accentColor.opacity(0.8), lineWidth: 1.2)
-            HStack(spacing: 8) {
-                Image(systemName: "pencil")
-                    .font(.system(size: 11, weight: .medium))
-                    .foregroundStyle(Color.accentColor)
+                .fill(Color.accentColor.opacity(0.1))
+            RoundedRectangle(cornerRadius: 7)
+                .strokeBorder(Color.accentColor.opacity(0.7), lineWidth: 1)
+            HStack(spacing: 10) {
+                RoundedRectangle(cornerRadius: 2)
+                    .fill(editCalendar?.color ?? Color.accentColor)
+                    .frame(width: 3)
+                    .padding(.vertical, 6)
                 TokenField(
                     text: $model.editText,
-                    fontSize: 13,
+                    fontSize: 14,
                     focusOnAppear: true,
                     respondsToPanelShow: false,
                     onSubmit: { model.commitEdit() },
                     onCancel: { model.cancelEdit() }
                 )
-                .frame(height: 18)
+                .frame(height: 20)
+                if let editCalendar {
+                    HStack(spacing: 6) {
+                        Circle()
+                            .fill(editCalendar.color)
+                            .frame(width: 8, height: 8)
+                        Text(editCalendar.name)
+                            .font(.system(size: 12, weight: .medium))
+                            .foregroundStyle(.secondary)
+                    }
+                    .padding(.horizontal, 9)
+                    .padding(.vertical, 4)
+                    .background(.quaternary.opacity(0.5), in: .capsule)
+                    .help("⌘1–9 to change calendar")
+                }
+                HStack(spacing: 5) {
+                    Keycap("↩")
+                    Text("save")
+                        .font(.system(size: 11))
+                }
+                .foregroundStyle(.tertiary)
             }
-            .padding(.horizontal, 9)
+            .padding(.horizontal, 8)
         }
     }
 
@@ -679,11 +703,16 @@ struct PanelView: View {
     }
 
     private func calendarIndexItem(_ slot: SlotCalendar) -> some View {
-        let isTarget = model.target?.id == slot.info.id
+        // While editing, the index reflects (and retargets) the edited event.
+        let activeID = model.editingEvent != nil ? model.editCalendarID : model.target?.id
+        let isTarget = activeID == slot.info.id
         return HStack(spacing: 6) {
             Text("⌘\(slot.number)")
                 .font(.system(size: 11, weight: .medium))
                 .foregroundStyle(isTarget ? AnyShapeStyle(.secondary) : AnyShapeStyle(.tertiary))
+            Circle()
+                .fill(slot.info.color)
+                .frame(width: 7, height: 7)
             Text(slot.info.name)
                 .font(.system(size: 13, weight: isTarget ? .medium : .regular))
                 .foregroundStyle(isTarget ? AnyShapeStyle(.primary) : AnyShapeStyle(.secondary))

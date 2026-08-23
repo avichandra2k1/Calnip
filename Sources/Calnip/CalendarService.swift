@@ -96,8 +96,9 @@ final class CalendarService {
     }
 
     /// Applies an inline edit to an existing event (this occurrence only).
+    /// A ">query" in the edit text wins over the ⌘-picked calendar.
     func update(eventID: String, title: String, start: Date, end: Date,
-                isAllDay: Bool, calendarQuery: String?) async throws {
+                isAllDay: Bool, calendarQuery: String?, calendarID: String?) async throws {
         guard await requestAccess() else { throw CalendarError.accessDenied }
         guard let event = store.event(withIdentifier: eventID) else {
             throw CalendarError.eventNotFound
@@ -107,6 +108,9 @@ final class CalendarService {
         event.endDate = end
         event.isAllDay = isAllDay
         if let calendarQuery, let calendar = match(calendarQuery) {
+            event.calendar = calendar
+        } else if let calendarID, calendarID != event.calendar?.calendarIdentifier,
+                  let calendar = store.calendar(withIdentifier: calendarID) {
             event.calendar = calendar
         }
         try store.save(event, span: .thisEvent)
