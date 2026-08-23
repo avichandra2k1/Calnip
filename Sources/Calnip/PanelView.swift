@@ -273,6 +273,14 @@ struct PanelView: View {
                 .onChange(of: model.timeline.day) { _, _ in
                     scrollToFocus(proxy, isToday: isToday, now: now)
                 }
+                .onChange(of: model.focusDate) { _, focus in
+                    guard let focus else { return }
+                    let hour = Calendar.current.component(.hour, from: focus)
+                    scrollToHour(proxy, hour)
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) {
+                        scrollToHour(proxy, hour)
+                    }
+                }
                 .onChange(of: model.selectedEventID) { _, id in
                     guard let id, let event = model.timeline.rows.first(where: { $0.id == id }),
                           !event.isAllDay else { return }
@@ -287,6 +295,11 @@ struct PanelView: View {
     }
 
     private func scrollToFocus(_ proxy: ScrollViewProxy, isToday: Bool, now: Date) {
+        if let focus = model.focusDate,
+           Calendar.current.isDate(focus, inSameDayAs: model.timeline.day) {
+            scrollToHour(proxy, Calendar.current.component(.hour, from: focus), animated: false)
+            return
+        }
         let hour = isToday ? Calendar.current.component(.hour, from: now) : 9
         scrollToHour(proxy, hour, animated: false)
     }

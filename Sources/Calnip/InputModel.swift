@@ -89,12 +89,16 @@ final class InputModel: ObservableObject {
     @Published var text: String = "" {
         didSet {
             parsed = Parser.parse(text, defaultDurationMinutes: Settings.defaultDuration)
-            browsedDay = nil
-            selectedEventID = nil
+            if !suppressTextSideEffects {
+                browsedDay = nil
+                selectedEventID = nil
+                focusDate = nil
+            }
             resolveTarget()
             refreshTimeline(debounce: true)
         }
     }
+    private var suppressTextSideEffects = false
     @Published private(set) var parsed = ParsedEntry()
     @Published var status: Status = .idle
     @Published private(set) var target: CalendarInfo?
@@ -107,6 +111,8 @@ final class InputModel: ObservableObject {
     @Published private(set) var selectedEventID: String?
     @Published private(set) var editingEvent: ContextEvent?
     @Published var editText: String = ""
+    /// Where the timeline should center (a just-saved event); nil = now.
+    @Published private(set) var focusDate: Date?
 
     private var accessGranted = false
     private var pickedCalendarID: String?
@@ -133,6 +139,7 @@ final class InputModel: ObservableObject {
         browsedDay = nil
         selectedEventID = nil
         editingEvent = nil
+        focusDate = nil
     }
 
     func prepare() {
@@ -196,11 +203,38 @@ final class InputModel: ObservableObject {
             return true
         case .left, .right:
             guard let day = browsedDay else { return false }
-            browsedDay = Calendar.current.date(byAdding: .day, value: key == .right ? 1 : -1, to: day)
+            let newDay = Calendar.current.date(byAdding: .day, value: key == .right ? 1 : -1, to: day) ?? day
+            browsedDay = newDay
             selectedEventID = nil
             refreshTimeline()
+            syncDayToken(to: newDay)
             return true
         }
+    }
+
+    /// Browsing tomorrow means the entry is probably for tomorrow — keep the
+    /// text's day token in step (only tod/tom are expressible).
+    private func syncDayToken(to day: Date) {
+        let calendar = Calendar.current
+        let wantsTomorrow = calendar.isDateInTomorrow(day)
+        guard wantsTomorrow || calendar.isDateInToday(day) else { return }
+
+        var newText = text
+        if let token = parsed.tokens.first(where: {
+            if case .day = $0.kind { return true }
+            return false
+        }) {
+            newText = ((newText as NSString).replacingCharacters(in: token.removalRange, with: " "))
+                .replacingOccurrences(of: #"\s+"#, with: " ", options: .regularExpression)
+                .trimmingCharacters(in: .whitespaces)
+        }
+        if wantsTomorrow {
+            newText = newText.isEmpty ? "tom" : "\(newText) tom"
+        }
+        guard newText != text else { return }
+        suppressTextSideEffects = true
+        text = newText
+        suppressTextSideEffects = false
     }
 
     private func moveSelection(_ delta: Int) {
@@ -357,9 +391,15 @@ final class InputModel: ObservableObject {
                     recurrence: entry.recurrence, recurrenceEnd: entry.recurrenceEnd)
                 status = .saved(calendar: calendar.title)
                 try? await Task.sleep(nanoseconds: 900_000_000)
-                // Stay open for the next entry — esc closes.
+                // Stay open for the next entry — esc closes. The timeline stays
+                // on the added event's day, centered on it.
                 text = ""
                 status = .idle
+                browsedDay = Calendar.current.startOfDay(for: start)
+                refreshTimeline()
+                focusDate = start
+                // Keep the next entry consistent with the day on screen.
+                syncDayToken(to: start)
             } catch {
                 status = .error(error.localizedDescription)
             }
