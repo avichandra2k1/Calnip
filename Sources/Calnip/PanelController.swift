@@ -9,6 +9,8 @@ final class FloatingPanel: NSPanel {
     var onCommandDigit: ((Int) -> Bool)?
     /// ⌘, opens settings.
     var onCommandComma: (() -> Void)?
+    /// ⌘E edits the selected event.
+    var onCommandE: (() -> Void)?
 
     override func performKeyEquivalent(with event: NSEvent) -> Bool {
         guard event.modifierFlags.contains(.command),
@@ -21,6 +23,10 @@ final class FloatingPanel: NSPanel {
         }
         if char == "," {
             onCommandComma?()
+            return true
+        }
+        if char == "e" {
+            onCommandE?()
             return true
         }
         return super.performKeyEquivalent(with: event)
@@ -68,6 +74,9 @@ final class PanelController: NSObject, NSWindowDelegate {
         panel.onCommandComma = { [weak self] in
             self?.hide()
             SettingsWindowController.shared.show()
+        }
+        panel.onCommandE = { [weak self] in
+            self?.model.beginEdit()
         }
 
         // Keep the top edge pinned as the panel grows/shrinks with content.

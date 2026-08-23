@@ -8,36 +8,50 @@ extension Notification.Name {
 /// Single-line NSTextView with Todoist-style inline chip highlighting.
 struct TokenField: NSViewRepresentable {
     @Binding var text: String
+    var fontSize: CGFloat = 24
+    /// Grab focus when created (the inline edit field).
+    var focusOnAppear: Bool = false
+    /// Refocus when the panel opens (the main field).
+    var respondsToPanelShow: Bool = true
     var onSubmit: () -> Void
     var onCancel: () -> Void
-    /// Return true to consume the key (day browsing); false keeps caret behavior.
+    /// Return true to consume the key (selection/day browsing); false keeps caret behavior.
     var onArrow: (ArrowKey) -> Bool = { _ in false }
-
-    static let font = NSFont.systemFont(ofSize: 24, weight: .regular)
 
     func makeCoordinator() -> Coordinator {
         Coordinator(self)
     }
 
     func makeNSView(context: Context) -> NSTextView {
+        let font = NSFont.systemFont(ofSize: fontSize)
         let textView = SingleLineTextView()
+        textView.lineHeight = font.boundingRectForFont.height + 4
         textView.delegate = context.coordinator
-        textView.font = Self.font
+        textView.font = font
         textView.isRichText = false
         textView.allowsUndo = true
         textView.drawsBackground = false
         textView.textContainerInset = .zero
         textView.textContainer?.lineFragmentPadding = 0
         textView.insertionPointColor = .controlAccentColor
-        textView.typingAttributes = Coordinator.baseAttributes
+        textView.typingAttributes = context.coordinator.baseAttributes
         context.coordinator.textView = textView
 
-        NotificationCenter.default.addObserver(
-            context.coordinator,
-            selector: #selector(Coordinator.panelDidShow),
-            name: .calnipPanelDidShow,
-            object: nil
-        )
+        if respondsToPanelShow {
+            NotificationCenter.default.addObserver(
+                context.coordinator,
+                selector: #selector(Coordinator.panelDidShow),
+                name: .calnipPanelDidShow,
+                object: nil
+            )
+        }
+        if focusOnAppear {
+            DispatchQueue.main.async { [weak textView] in
+                guard let textView else { return }
+                textView.window?.makeFirstResponder(textView)
+                textView.setSelectedRange(NSRange(location: (textView.string as NSString).length, length: 0))
+            }
+        }
         return textView
     }
 
@@ -53,10 +67,12 @@ struct TokenField: NSViewRepresentable {
         var parent: TokenField
         weak var textView: NSTextView?
 
-        static let baseAttributes: [NSAttributedString.Key: Any] = [
-            .font: TokenField.font,
-            .foregroundColor: NSColor.labelColor,
-        ]
+        var baseAttributes: [NSAttributedString.Key: Any] {
+            [
+                .font: NSFont.systemFont(ofSize: parent.fontSize),
+                .foregroundColor: NSColor.labelColor,
+            ]
+        }
 
         init(_ parent: TokenField) {
             self.parent = parent
@@ -80,7 +96,7 @@ struct TokenField: NSViewRepresentable {
             guard let textView, let storage = textView.textStorage else { return }
             let full = NSRange(location: 0, length: (textView.string as NSString).length)
             storage.beginEditing()
-            storage.setAttributes(Self.baseAttributes, range: full)
+            storage.setAttributes(baseAttributes, range: full)
             for token in Parser.parse(textView.string).tokens {
                 storage.addAttributes([
                     .foregroundColor: NSColor.controlAccentColor,
@@ -88,7 +104,7 @@ struct TokenField: NSViewRepresentable {
                 ], range: token.range)
             }
             storage.endEditing()
-            textView.typingAttributes = Self.baseAttributes
+            textView.typingAttributes = baseAttributes
         }
 
         func textView(_ textView: NSTextView, doCommandBy commandSelector: Selector) -> Bool {
@@ -116,7 +132,9 @@ struct TokenField: NSViewRepresentable {
 
 /// Grows to fill width, single line tall.
 final class SingleLineTextView: NSTextView {
+    var lineHeight: CGFloat = 34
+
     override var intrinsicContentSize: NSSize {
-        NSSize(width: NSView.noIntrinsicMetric, height: TokenField.font.boundingRectForFont.height + 4)
+        NSSize(width: NSView.noIntrinsicMetric, height: lineHeight)
     }
 }

@@ -52,6 +52,7 @@ struct ContextEvent: Equatable, Identifiable {
     let isAllDay: Bool
     let isConflict: Bool
     let color: Color
+    let calendarName: String
 
     init(_ event: EKEvent, conflict: Bool) {
         id = event.eventIdentifier ?? UUID().uuidString
@@ -61,7 +62,15 @@ struct ContextEvent: Equatable, Identifiable {
         isAllDay = event.isAllDay
         isConflict = conflict
         color = Color(nsColor: event.calendar?.color ?? .controlAccentColor)
+        calendarName = event.calendar?.title ?? ""
     }
+}
+
+/// Day + rows published together so the header can never disagree with the
+/// list while a refresh is in flight.
+struct TimelineState: Equatable {
+    var day = Date()
+    var rows: [ContextEvent] = []
 }
 
 enum ArrowKey {
@@ -81,20 +90,23 @@ final class InputModel: ObservableObject {
         didSet {
             parsed = Parser.parse(text, defaultDurationMinutes: Settings.defaultDuration)
             browsedDay = nil
+            selectedEventID = nil
             resolveTarget()
-            scheduleTimelineRefresh()
+            refreshTimeline(debounce: true)
         }
     }
     @Published private(set) var parsed = ParsedEntry()
     @Published var status: Status = .idle
     @Published private(set) var target: CalendarInfo?
     @Published private(set) var queryUnmatched = false
-    /// Events of the displayed day, all-day first, conflicts marked.
-    @Published private(set) var timeline: [ContextEvent] = []
+    @Published private(set) var timeline = TimelineState()
     @Published private(set) var calendars: [CalendarInfo] = []
     @Published private(set) var slotCalendars: [SlotCalendar] = []
     /// Non-nil while arrow-key browsing; overrides the parsed day.
     @Published private(set) var browsedDay: Date?
+    @Published private(set) var selectedEventID: String?
+    @Published private(set) var editingEvent: ContextEvent?
+    @Published var editText: String = ""
 
     private var accessGranted = false
     private var pickedCalendarID: String?
@@ -107,8 +119,8 @@ final class InputModel: ObservableObject {
         !parsed.title.isEmpty && status != .saving
     }
 
-    /// The day the timeline shows.
-    var displayDay: Date {
+    /// The day the timeline should show.
+    private var displayDay: Date {
         if let browsedDay { return browsedDay }
         if !text.isEmpty, let start = parsed.start { return start }
         return Date()
@@ -119,6 +131,8 @@ final class InputModel: ObservableObject {
         status = .idle
         pickedCalendarID = nil
         browsedDay = nil
+        selectedEventID = nil
+        editingEvent = nil
     }
 
     func prepare() {
@@ -128,7 +142,7 @@ final class InputModel: ObservableObject {
             guard accessGranted else { return }
             calendars = CalendarService.shared.writableCalendars.map(CalendarInfo.init)
             loadSlots()
-            scheduleTimelineRefresh()
+            refreshTimeline()
         }
     }
 
@@ -165,50 +179,138 @@ final class InputModel: ObservableObject {
             .map(CalendarInfo.init)
     }
 
-    // MARK: - Day browsing (↓ then ←/→, ↑ back)
+    // MARK: - Selection & day browsing (↓/↑ select, ←/→ days, ⌘E edit)
 
     func handleArrow(_ key: ArrowKey) -> Bool {
+        guard editingEvent == nil else { return false }
         switch key {
         case .down:
             if browsedDay == nil {
                 browsedDay = Calendar.current.startOfDay(for: displayDay)
-                scheduleTimelineRefresh()
             }
+            moveSelection(1)
             return true
         case .up:
-            guard browsedDay != nil else { return false }
-            browsedDay = nil
-            scheduleTimelineRefresh()
+            guard browsedDay != nil || selectedEventID != nil else { return false }
+            moveSelection(-1)
             return true
         case .left, .right:
             guard let day = browsedDay else { return false }
             browsedDay = Calendar.current.date(byAdding: .day, value: key == .right ? 1 : -1, to: day)
-            scheduleTimelineRefresh()
+            selectedEventID = nil
+            refreshTimeline()
             return true
         }
     }
 
+    private func moveSelection(_ delta: Int) {
+        let rows = timeline.rows
+        guard !rows.isEmpty else {
+            if delta < 0 { exitBrowse() }
+            return
+        }
+        guard let current = selectedEventID,
+              let index = rows.firstIndex(where: { $0.id == current }) else {
+            if delta > 0 { selectedEventID = rows.first?.id }
+            return
+        }
+        let next = index + delta
+        if next < 0 {
+            exitBrowse()
+        } else if next < rows.count {
+            selectedEventID = rows[next].id
+        }
+    }
+
+    private func exitBrowse() {
+        selectedEventID = nil
+        browsedDay = nil
+        refreshTimeline()
+    }
+
+    // MARK: - Editing (⌘E)
+
+    var selectedEvent: ContextEvent? {
+        timeline.rows.first { $0.id == selectedEventID }
+    }
+
+    func beginEdit() {
+        guard editingEvent == nil, let event = selectedEvent else { return }
+        editingEvent = event
+        editText = Self.editPhrase(for: event)
+    }
+
+    /// "standup 3pm-4pm" — round-trips through the same parser.
+    static func editPhrase(for event: ContextEvent) -> String {
+        guard !event.isAllDay else { return event.title }
+        func phrase(_ date: Date) -> String {
+            let comps = Calendar.current.dateComponents([.hour, .minute], from: date)
+            let hour24 = comps.hour ?? 0
+            let minute = comps.minute ?? 0
+            let meridiem = hour24 >= 12 ? "pm" : "am"
+            var hour = hour24 % 12
+            if hour == 0 { hour = 12 }
+            return minute == 0 ? "\(hour)\(meridiem)" : "\(hour):" + String(format: "%02d", minute) + meridiem
+        }
+        return "\(event.title) \(phrase(event.start))-\(phrase(event.end))"
+    }
+
+    func commitEdit() {
+        guard let event = editingEvent else { return }
+        // Parse relative to the event's own day so "4pm" keeps it on that day.
+        let entry = Parser.parse(editText, now: event.start,
+                                 defaultDurationMinutes: Settings.defaultDuration)
+        guard !entry.title.isEmpty, let start = entry.start, let end = entry.end else { return }
+        Task {
+            do {
+                try await CalendarService.shared.update(
+                    eventID: event.id, title: entry.title, start: start, end: end,
+                    isAllDay: entry.isAllDay, calendarQuery: entry.calendarQuery)
+                editingEvent = nil
+                editText = ""
+                refreshTimeline()
+                NotificationCenter.default.post(name: .calnipPanelDidShow, object: nil)
+            } catch {
+                status = .error(error.localizedDescription)
+                editingEvent = nil
+                editText = ""
+                NotificationCenter.default.post(name: .calnipPanelDidShow, object: nil)
+            }
+        }
+    }
+
+    func cancelEdit() {
+        editingEvent = nil
+        editText = ""
+        NotificationCenter.default.post(name: .calnipPanelDidShow, object: nil)
+    }
+
     // MARK: - Timeline
 
-    private func scheduleTimelineRefresh() {
+    private func refreshTimeline(debounce: Bool = false) {
         timelineTask?.cancel()
         guard accessGranted else { return }
         let day = displayDay
         let entry = parsed
         let typing = !text.isEmpty
         timelineTask = Task {
-            try? await Task.sleep(nanoseconds: 150_000_000)
-            guard !Task.isCancelled else { return }
+            if debounce {
+                try? await Task.sleep(nanoseconds: 150_000_000)
+                guard !Task.isCancelled else { return }
+            }
             let events = CalendarService.shared.eventsOnDay(of: day)
             guard !Task.isCancelled else { return }
-            timeline = Self.buildTimeline(events: events, day: day, entry: typing ? entry : nil)
+            timeline = TimelineState(
+                day: day,
+                rows: Self.buildRows(events: events, day: day, entry: typing ? entry : nil)
+            )
         }
     }
 
-    /// All-day rows first, then timed rows (capped to the 8 nearest the focus
-    /// time). Conflicts marked only for a timed entry on the displayed day —
+    /// All-day rows first, then every timed event of the day (the view
+    /// scrolls). Conflicts marked only for a timed entry on the displayed day —
     /// all-day events never conflict in either direction.
-    private static func buildTimeline(events: [EKEvent], day: Date, entry: ParsedEntry?) -> [ContextEvent] {
+    private static func buildRows(events: [EKEvent], day: Date, entry: ParsedEntry?) -> [ContextEvent] {
         let calendar = Calendar.current
         var conflictWindow: (start: Date, end: Date)?
         if let entry, !entry.isAllDay, let start = entry.start, let end = entry.end,
@@ -216,19 +318,9 @@ final class InputModel: ObservableObject {
             conflictWindow = (start, end)
         }
 
-        let allDayRows = events.filter(\.isAllDay).prefix(2)
+        let allDayRows = events.filter(\.isAllDay).prefix(3)
             .map { ContextEvent($0, conflict: false) }
-
-        var timed = events.filter { !$0.isAllDay }
-        if timed.count > 8 {
-            let focus = conflictWindow?.start
-                ?? (calendar.isDateInToday(day) ? Date() : calendar.startOfDay(for: day).addingTimeInterval(9 * 3600))
-            timed = timed
-                .sorted { abs($0.startDate.timeIntervalSince(focus)) < abs($1.startDate.timeIntervalSince(focus)) }
-                .prefix(8)
-                .sorted { $0.startDate < $1.startDate }
-        }
-        let timedRows = timed.map { event in
+        let timedRows = events.filter { !$0.isAllDay }.map { event in
             ContextEvent(event, conflict: conflictWindow.map {
                 event.startDate < $0.end && event.endDate > $0.start
             } ?? false)

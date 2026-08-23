@@ -9,11 +9,13 @@ final class CalendarService {
     enum CalendarError: LocalizedError {
         case accessDenied
         case noCalendar
+        case eventNotFound
 
         var errorDescription: String? {
             switch self {
             case .accessDenied: return "Calendar access denied — enable it in System Settings › Privacy"
             case .noCalendar: return "No writable calendar found"
+            case .eventNotFound: return "Event no longer exists"
             }
         }
     }
@@ -91,6 +93,23 @@ final class CalendarService {
         try store.save(event, span: .thisEvent)
         UserDefaults.standard.set(calendar.calendarIdentifier, forKey: Self.lastCalendarKey)
         return calendar
+    }
+
+    /// Applies an inline edit to an existing event (this occurrence only).
+    func update(eventID: String, title: String, start: Date, end: Date,
+                isAllDay: Bool, calendarQuery: String?) async throws {
+        guard await requestAccess() else { throw CalendarError.accessDenied }
+        guard let event = store.event(withIdentifier: eventID) else {
+            throw CalendarError.eventNotFound
+        }
+        event.title = title
+        event.startDate = start
+        event.endDate = end
+        event.isAllDay = isAllDay
+        if let calendarQuery, let calendar = match(calendarQuery) {
+            event.calendar = calendar
+        }
+        try store.save(event, span: .thisEvent)
     }
 
     private static func rule(for spec: RecurrenceSpec, until: Date?) -> EKRecurrenceRule {

@@ -7,10 +7,12 @@ struct PanelView: View {
     private var expanded: Bool { viewMode == "expanded" }
     private var typing: Bool { !model.text.isEmpty }
 
-    // Timeline metrics — the spine line must cross the dot column's center.
+    // Timeline metrics — the spine line must cross the marker column's center.
     private let timeColumnWidth: CGFloat = 70
     private let dotColumnWidth: CGFloat = 16
     private let rowSpacing: CGFloat = 10
+    private let rowHeight: CGFloat = 32
+    private let maxTimelineHeight: CGFloat = 380
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -21,7 +23,7 @@ struct PanelView: View {
                 chipsRow
                     .padding(.horizontal, 22)
                     .padding(.bottom, 14)
-                let conflicts = model.timeline.filter(\.isConflict)
+                let conflicts = model.timeline.rows.filter(\.isConflict)
                 if !conflicts.isEmpty, model.status == .idle {
                     VStack(alignment: .leading, spacing: 4) {
                         ForEach(conflicts) { conflictRow($0) }
@@ -163,14 +165,14 @@ struct PanelView: View {
     }
 
     private var timelineSection: some View {
-        let day = model.displayDay
+        let day = model.timeline.day
         let calendar = Calendar.current
         let isToday = calendar.isDateInToday(day)
         let previewOnDay = typing && model.status == .idle
             && model.parsed.start.map { calendar.isDate($0, inSameDayAs: day) } ?? false
 
-        let allDay = model.timeline.filter(\.isAllDay)
-        let timed = model.timeline.filter { !$0.isAllDay }
+        let allDay = model.timeline.rows.filter(\.isAllDay)
+        let timed = model.timeline.rows.filter { !$0.isAllDay }
 
         // Interleave events, the now line, and the typed preview chronologically.
         var keyed: [(Date, TimelineRow)] = timed.map { ($0.start, .event($0)) }
@@ -182,35 +184,65 @@ struct PanelView: View {
         }
         let rows = keyed.sorted { $0.0 < $1.0 }.map(\.1)
         let showAllDayPreview = previewOnDay && model.parsed.isAllDay
+        let rowCount = allDay.count + rows.count + (showAllDayPreview ? 1 : 0)
+        let scrollHeight = min(max(CGFloat(rowCount) * rowHeight, 44), maxTimelineHeight)
 
         return VStack(alignment: .leading, spacing: 6) {
             timelineHeader(day: day, isToday: isToday)
-            if allDay.isEmpty, rows.isEmpty, !showAllDayPreview {
+            if rowCount == 0 {
                 Text("No events")
                     .font(.system(size: 13))
                     .foregroundStyle(.tertiary)
                     .padding(.leading, 24 + timeColumnWidth + rowSpacing + dotColumnWidth + rowSpacing)
                     .padding(.vertical, 8)
             } else {
-                VStack(alignment: .leading, spacing: 0) {
-                    if showAllDayPreview {
-                        previewRow(allDay: true)
-                    }
-                    ForEach(allDay) { timelineEventRow($0, isToday: isToday) }
-                    ForEach(rows) { row in
-                        switch row {
-                        case .event(let event): timelineEventRow(event, isToday: isToday)
-                        case .nowLine: nowLine
-                        case .preview: previewRow(allDay: false)
+                ScrollViewReader { proxy in
+                    ScrollView(showsIndicators: false) {
+                        VStack(alignment: .leading, spacing: 0) {
+                            if showAllDayPreview {
+                                previewRow(allDay: true)
+                                    .id("preview")
+                            }
+                            ForEach(allDay) { event in
+                                timelineEventRow(event, isToday: isToday)
+                                    .id(event.id)
+                            }
+                            ForEach(rows) { row in
+                                switch row {
+                                case .event(let event):
+                                    timelineEventRow(event, isToday: isToday)
+                                        .id(event.id)
+                                case .nowLine:
+                                    nowLine
+                                        .id("now-line")
+                                case .preview:
+                                    previewRow(allDay: false)
+                                        .id("preview")
+                                }
+                            }
+                        }
+                        .overlay(alignment: .leading) {
+                            Rectangle()
+                                .fill(.quaternary.opacity(0.4))
+                                .frame(width: 1)
+                                .padding(.vertical, 6)
+                                .offset(x: 24 + timeColumnWidth + rowSpacing + dotColumnWidth / 2)
                         }
                     }
-                }
-                .overlay(alignment: .leading) {
-                    Rectangle()
-                        .fill(.quaternary.opacity(0.5))
-                        .frame(width: 1)
-                        .padding(.vertical, 6)
-                        .offset(x: 24 + timeColumnWidth + rowSpacing + dotColumnWidth / 2)
+                    .frame(height: scrollHeight)
+                    .onAppear {
+                        proxy.scrollTo(isToday ? "now-line" : rows.first?.id, anchor: .center)
+                    }
+                    .onChange(of: model.selectedEventID) { _, id in
+                        if let id {
+                            withAnimation(.easeOut(duration: 0.15)) { proxy.scrollTo(id, anchor: .center) }
+                        }
+                    }
+                    .onChange(of: previewOnDay ? model.parsed.start : nil) { _, start in
+                        if start != nil {
+                            withAnimation(.easeOut(duration: 0.15)) { proxy.scrollTo("preview", anchor: .center) }
+                        }
+                    }
                 }
             }
         }
@@ -222,21 +254,35 @@ struct PanelView: View {
                 .font(.system(size: 12, weight: .semibold))
                 .foregroundStyle(.tertiary)
             Spacer()
-            if model.browsedDay != nil {
+            if model.selectedEventID != nil {
+                HStack(spacing: 4) {
+                    Keycap("↑↓")
+                    Text("select")
+                        .font(.system(size: 11))
+                    Keycap("←")
+                    Keycap("→")
+                    Text("days")
+                        .font(.system(size: 11))
+                    Keycap("⌘E")
+                    Text("edit")
+                        .font(.system(size: 11))
+                }
+                .foregroundStyle(.tertiary)
+            } else if model.browsedDay != nil {
                 HStack(spacing: 4) {
                     Keycap("←")
                     Keycap("→")
                     Text("days")
                         .font(.system(size: 11))
-                    Keycap("↑")
-                    Text("back")
+                    Keycap("↓")
+                    Text("select")
                         .font(.system(size: 11))
                 }
                 .foregroundStyle(.tertiary)
             } else {
                 HStack(spacing: 4) {
                     Keycap("↓")
-                    Text("browse")
+                    Text("select")
                         .font(.system(size: 11))
                 }
                 .foregroundStyle(.tertiary)
@@ -252,60 +298,99 @@ struct PanelView: View {
         return dateText
     }
 
+    @ViewBuilder
     private func timelineEventRow(_ event: ContextEvent, isToday: Bool) -> some View {
-        let past = !event.isAllDay && event.end < Date() && isToday
-        let timeStyle: AnyShapeStyle = event.isConflict ? AnyShapeStyle(.red.opacity(0.9))
-            : past ? AnyShapeStyle(.quaternary) : AnyShapeStyle(.secondary)
-        let titleStyle: AnyShapeStyle = event.isConflict ? AnyShapeStyle(.red)
-            : past ? AnyShapeStyle(.tertiary) : AnyShapeStyle(.primary)
-        return HStack(spacing: rowSpacing) {
-            Text(event.isAllDay ? "all day" : event.start.formatted(date: .omitted, time: .shortened))
-                .font(.system(size: 12))
-                .foregroundStyle(timeStyle)
-                .frame(width: timeColumnWidth, alignment: .trailing)
-            ZStack {
-                if event.isConflict {
-                    Image(systemName: "xmark.octagon.fill")
-                        .font(.system(size: 11))
-                        .foregroundStyle(.red)
-                } else {
+        if model.editingEvent?.id == event.id {
+            editRow
+        } else {
+            let past = !event.isAllDay && event.end < Date() && isToday
+            let selected = model.selectedEventID == event.id
+            let timeStyle: AnyShapeStyle = event.isConflict ? AnyShapeStyle(.red.opacity(0.9))
+                : past ? AnyShapeStyle(.quaternary) : AnyShapeStyle(.secondary)
+            let titleStyle: AnyShapeStyle = event.isConflict ? AnyShapeStyle(.red)
+                : past ? AnyShapeStyle(.tertiary) : AnyShapeStyle(.primary)
+            HStack(spacing: rowSpacing) {
+                Text(event.isAllDay ? "all day" : event.start.formatted(date: .omitted, time: .shortened))
+                    .font(.system(size: 12))
+                    .foregroundStyle(timeStyle)
+                    .frame(width: timeColumnWidth, alignment: .trailing)
+                ZStack {
+                    if event.isConflict {
+                        Image(systemName: "xmark.octagon.fill")
+                            .font(.system(size: 11))
+                            .foregroundStyle(.red)
+                    } else {
+                        Circle()
+                            .fill(.tertiary.opacity(past ? 0.4 : 0.9))
+                            .frame(width: 5, height: 5)
+                    }
+                }
+                .frame(width: dotColumnWidth)
+                Text(event.title)
+                    .font(.system(size: 14, weight: event.isConflict ? .medium : .regular))
+                    .foregroundStyle(titleStyle)
+                    .lineLimit(1)
+                Spacer()
+                HStack(spacing: 6) {
                     Circle()
-                        .fill(event.color.opacity(past ? 0.35 : 1))
-                        .frame(width: 9, height: 9)
+                        .fill(event.color.opacity(past ? 0.4 : 1))
+                        .frame(width: 7, height: 7)
+                    Text(event.calendarName)
+                        .font(.system(size: 12))
+                        .foregroundStyle(past ? AnyShapeStyle(.quaternary) : AnyShapeStyle(.tertiary))
                 }
             }
-            .frame(width: dotColumnWidth)
-            Text(event.title)
-                .font(.system(size: 14, weight: event.isConflict ? .medium : .regular))
-                .foregroundStyle(titleStyle)
-                .lineLimit(1)
-            Spacer()
-            if !event.isAllDay {
-                Text("– \(event.end.formatted(date: .omitted, time: .shortened))")
-                    .font(.system(size: 12))
-                    .foregroundStyle(past ? AnyShapeStyle(.quaternary) : AnyShapeStyle(.tertiary))
-            }
+            .padding(.horizontal, 24)
+            .padding(.vertical, 6)
+            .background(
+                selected ? AnyShapeStyle(.quaternary.opacity(0.55)) : AnyShapeStyle(.clear),
+                in: .rect(cornerRadius: 8)
+            )
+        }
+    }
+
+    /// Inline NLP edit field for the selected event (⌘E).
+    private var editRow: some View {
+        HStack(spacing: rowSpacing) {
+            Image(systemName: "pencil")
+                .font(.system(size: 12, weight: .medium))
+                .foregroundStyle(Color.accentColor)
+                .frame(width: timeColumnWidth, alignment: .trailing)
+            Circle()
+                .strokeBorder(Color.accentColor, lineWidth: 1.5)
+                .frame(width: 9, height: 9)
+                .frame(width: dotColumnWidth)
+            TokenField(
+                text: $model.editText,
+                fontSize: 14,
+                focusOnAppear: true,
+                respondsToPanelShow: false,
+                onSubmit: { model.commitEdit() },
+                onCancel: { model.cancelEdit() }
+            )
+            .frame(height: 20)
         }
         .padding(.horizontal, 24)
-        .padding(.vertical, 5)
+        .padding(.vertical, 6)
+        .background(Color.accentColor.opacity(0.08), in: .rect(cornerRadius: 8))
     }
 
     private var nowLine: some View {
         HStack(spacing: rowSpacing) {
             Text(Date().formatted(date: .omitted, time: .shortened))
-                .font(.system(size: 11, weight: .semibold))
-                .foregroundStyle(.red)
+                .font(.system(size: 10, weight: .medium))
+                .foregroundStyle(.red.opacity(0.75))
                 .frame(width: timeColumnWidth, alignment: .trailing)
             Circle()
-                .fill(.red)
-                .frame(width: 7, height: 7)
+                .fill(.red.opacity(0.65))
+                .frame(width: 5, height: 5)
                 .frame(width: dotColumnWidth)
             Rectangle()
-                .fill(.red.opacity(0.7))
-                .frame(height: 1.5)
+                .fill(.red.opacity(0.35))
+                .frame(height: 1)
         }
         .padding(.horizontal, 24)
-        .padding(.vertical, 3)
+        .padding(.vertical, 2)
     }
 
     /// The event being typed, ghosted into its chronological slot.
@@ -324,15 +409,19 @@ struct PanelView: View {
                 .foregroundStyle(Color.accentColor)
                 .lineLimit(1)
             Spacer()
-            if !allDay, model.parsed.hasExplicitEnd || model.parsed.hasExplicitTime,
-               let end = model.parsed.end {
-                Text("– \(end.formatted(date: .omitted, time: .shortened))")
-                    .font(.system(size: 12))
-                    .foregroundStyle(Color.accentColor.opacity(0.7))
+            if let target = model.target {
+                HStack(spacing: 6) {
+                    Circle()
+                        .fill(target.color)
+                        .frame(width: 7, height: 7)
+                    Text(target.name)
+                        .font(.system(size: 12))
+                        .foregroundStyle(Color.accentColor.opacity(0.8))
+                }
             }
         }
         .padding(.horizontal, 24)
-        .padding(.vertical, 5)
+        .padding(.vertical, 6)
         .background(Color.accentColor.opacity(0.07), in: .rect(cornerRadius: 8))
     }
 
