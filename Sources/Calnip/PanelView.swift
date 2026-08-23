@@ -500,10 +500,14 @@ struct PanelView: View {
     private var editBlock: some View {
         let editCalendar = model.calendars.first { $0.id == model.editCalendarID }
         return ZStack(alignment: .leading) {
+            // Same treatment as the new-event ghost: readable backing + dashed border.
             RoundedRectangle(cornerRadius: 7)
-                .fill(Color.accentColor.opacity(0.12))
+                .fill(.thickMaterial)
             RoundedRectangle(cornerRadius: 7)
-                .strokeBorder(Color.accentColor.opacity(0.7), lineWidth: 1)
+                .fill(Color.accentColor.opacity(0.2))
+            RoundedRectangle(cornerRadius: 7)
+                .strokeBorder(Color.accentColor,
+                              style: StrokeStyle(lineWidth: 1.5, dash: [4, 3]))
             HStack(spacing: 10) {
                 RoundedRectangle(cornerRadius: 2)
                     .fill(editCalendar?.color ?? Color.accentColor)
