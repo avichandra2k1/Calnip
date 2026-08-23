@@ -3,6 +3,8 @@ import SwiftUI
 
 extension Notification.Name {
     static let calnipPanelDidShow = Notification.Name("com.avi.calnip.panelDidShow")
+    /// Refocus the main field without the "panel shown" side effects (scroll reset).
+    static let calnipFocusField = Notification.Name("com.avi.calnip.focusField")
 }
 
 /// Single-line NSTextView with Todoist-style inline chip highlighting.
@@ -38,12 +40,14 @@ struct TokenField: NSViewRepresentable {
         context.coordinator.textView = textView
 
         if respondsToPanelShow {
-            NotificationCenter.default.addObserver(
-                context.coordinator,
-                selector: #selector(Coordinator.panelDidShow),
-                name: .calnipPanelDidShow,
-                object: nil
-            )
+            for name in [Notification.Name.calnipPanelDidShow, .calnipFocusField] {
+                NotificationCenter.default.addObserver(
+                    context.coordinator,
+                    selector: #selector(Coordinator.panelDidShow),
+                    name: name,
+                    object: nil
+                )
+            }
         }
         if focusOnAppear {
             DispatchQueue.main.async { [weak textView] in

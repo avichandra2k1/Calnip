@@ -262,6 +262,14 @@ struct PanelView: View {
                 .onAppear {
                     scrollToFocus(proxy, isToday: isToday, now: now)
                 }
+                .onReceive(NotificationCenter.default.publisher(for: .calnipPanelDidShow)) { _ in
+                    // Re-center on the current time each open; second pass once
+                    // the freshly fetched timeline has settled the geometry.
+                    scrollToFocus(proxy, isToday: isToday, now: Date())
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) {
+                        scrollToFocus(proxy, isToday: isToday, now: Date())
+                    }
+                }
                 .onChange(of: model.timeline.day) { _, _ in
                     scrollToFocus(proxy, isToday: isToday, now: now)
                 }

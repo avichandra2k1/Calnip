@@ -277,12 +277,12 @@ final class InputModel: ObservableObject {
                 editingEvent = nil
                 editText = ""
                 refreshTimeline()
-                NotificationCenter.default.post(name: .calnipPanelDidShow, object: nil)
+                NotificationCenter.default.post(name: .calnipFocusField, object: nil)
             } catch {
                 status = .error(error.localizedDescription)
                 editingEvent = nil
                 editText = ""
-                NotificationCenter.default.post(name: .calnipPanelDidShow, object: nil)
+                NotificationCenter.default.post(name: .calnipFocusField, object: nil)
             }
         }
     }
@@ -290,7 +290,7 @@ final class InputModel: ObservableObject {
     func cancelEdit() {
         editingEvent = nil
         editText = ""
-        NotificationCenter.default.post(name: .calnipPanelDidShow, object: nil)
+        NotificationCenter.default.post(name: .calnipFocusField, object: nil)
     }
 
     // MARK: - Timeline
