@@ -9,7 +9,7 @@ struct PanelView: View {
     private var typing: Bool { !model.text.isEmpty }
 
     // Day-grid metrics.
-    private let hourHeight: CGFloat = 32
+    private let hourHeight: CGFloat = 36
     /// Total height a collapsed run of empty hours squeezes into.
     private let collapsedRunHeight: CGFloat = 30
     private let gutterWidth: CGFloat = 66
@@ -367,9 +367,10 @@ struct PanelView: View {
                         .offset(y: y - 6)
                 }
 
-                // Event blocks.
+                // Event blocks — a third of the width by default (Calendar-app
+                // proportions); only 4+ concurrent events divide further.
                 ForEach(placed) { item in
-                    let width = (contentWidth / CGFloat(item.columns))
+                    let width = (contentWidth / CGFloat(max(item.columns, 3)))
                     let x = contentX + width * CGFloat(item.column)
                     let y = max(yOffset(item.event.start), 0)
                     let height = max(yOffset(item.event.end) - y, 16)
@@ -386,13 +387,18 @@ struct PanelView: View {
                     }
                 }
 
-                // Ghost of the entry being typed.
+                // Ghost of the entry being typed — same third-width, shifted
+                // one column right per overlapping event so nothing is hidden.
                 if timedPreview, let start = model.parsed.start, let end = model.parsed.end {
                     let y = max(yOffset(start), 0)
                     let height = max(yOffset(min(end, start.addingTimeInterval(86400))) - y, 16)
+                    let unit = contentWidth / 3
+                    let usedColumns = Set(placed.filter { $0.event.start < end && $0.event.end > start }
+                        .map(\.column))
+                    let freeColumn = [0, 1, 2].first { !usedColumns.contains($0) } ?? 2
                     previewBlock(height: height)
-                        .frame(width: contentWidth - 4, height: height)
-                        .offset(x: contentX, y: y)
+                        .frame(width: unit - 4, height: height)
+                        .offset(x: contentX + unit * CGFloat(freeColumn), y: y)
                         .zIndex(5)   // the entry being typed always wins overlaps
                 }
 
