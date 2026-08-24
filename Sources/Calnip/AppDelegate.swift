@@ -9,6 +9,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var newEventItem: NSMenuItem?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
+        // Single instance: if another copy is already running (e.g. dev build
+        // and the installed one), hand off to it and quit.
+        let others = NSRunningApplication.runningApplications(
+            withBundleIdentifier: Bundle.main.bundleIdentifier ?? "com.avi.calnip"
+        ).filter { $0 != NSRunningApplication.current }
+        if !others.isEmpty {
+            DistributedNotificationCenter.default().postNotificationName(
+                Notification.Name("com.avi.calnip.toggle"), object: nil,
+                userInfo: nil, deliverImmediately: true)
+            NSApp.terminate(nil)
+            return
+        }
+
         panelController = PanelController()
 
         // Ask for calendar access up front, tied to launch — if the prompt

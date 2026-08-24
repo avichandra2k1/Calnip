@@ -885,7 +885,11 @@ struct PanelChrome: ViewModifier {
     @ViewBuilder
     func body(content: Content) -> some View {
         if glass {
+            // A partial backing over the glass keeps the backdrop from bleeding
+            // through too strongly while preserving the translucent look.
             content
+                .background(Color(nsColor: .windowBackgroundColor).opacity(0.45),
+                            in: .rect(cornerRadius: 28))
                 .glassEffect(.regular, in: .rect(cornerRadius: 28))
         } else {
             content
