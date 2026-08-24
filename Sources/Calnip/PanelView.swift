@@ -55,9 +55,22 @@ struct PanelView: View {
         footer
     }
 
+    // Hairlines and fills need real contrast on the light glass; the dark
+    // values would be glaring in light mode and vice versa.
+    private var hairline: AnyShapeStyle {
+        colorScheme == .light ? AnyShapeStyle(Color.black.opacity(0.15))
+                              : AnyShapeStyle(.quaternary.opacity(0.5))
+    }
+    private var gridLine: AnyShapeStyle {
+        colorScheme == .light ? AnyShapeStyle(Color.black.opacity(0.1))
+                              : AnyShapeStyle(.quaternary.opacity(0.35))
+    }
+    private var blockFill: Double { colorScheme == .light ? 0.28 : 0.18 }
+    private var ghostFill: Double { colorScheme == .light ? 0.22 : 0.14 }
+
     private var divider: some View {
         Rectangle()
-            .fill(.quaternary.opacity(0.5))
+            .fill(hairline)
             .frame(height: 1)
     }
 
@@ -326,13 +339,13 @@ struct PanelView: View {
                 ForEach(labeledHours, id: \.self) { hour in
                     let y = accumulated[hour]
                     Rectangle()
-                        .fill(.quaternary.opacity(0.35))
-                        .frame(height: 0.5)
+                        .fill(gridLine)
+                        .frame(height: colorScheme == .light ? 1 : 0.5)
                         .padding(.leading, gutterWidth)
                         .offset(y: y)
                     Text(hourLabel(hour))
                         .font(.system(size: 10, weight: .medium))
-                        .foregroundStyle(.tertiary)
+                        .foregroundStyle(colorScheme == .light ? AnyShapeStyle(.secondary) : AnyShapeStyle(.tertiary))
                         .frame(width: gutterWidth - 14, alignment: .trailing)
                         .offset(y: y - 6)
                 }
@@ -400,7 +413,7 @@ struct PanelView: View {
         let compact = height < 36
         return ZStack(alignment: .topLeading) {
             RoundedRectangle(cornerRadius: 7)
-                .fill(event.color.opacity(0.18))
+                .fill(event.color.opacity(blockFill))
             HStack(spacing: 0) {
                 RoundedRectangle(cornerRadius: 2)
                     .fill(event.color)
@@ -458,7 +471,7 @@ struct PanelView: View {
             RoundedRectangle(cornerRadius: 7)
                 .fill(.thickMaterial)
             RoundedRectangle(cornerRadius: 7)
-                .fill(tint.opacity(0.14))
+                .fill(tint.opacity(ghostFill))
             RoundedRectangle(cornerRadius: 7)
                 .strokeBorder(readable(tint).opacity(0.9),
                               style: StrokeStyle(lineWidth: 1.5, dash: [4, 3]))
@@ -507,7 +520,7 @@ struct PanelView: View {
             RoundedRectangle(cornerRadius: 7)
                 .fill(.thickMaterial)
             RoundedRectangle(cornerRadius: 7)
-                .fill(tint.opacity(0.14))
+                .fill(tint.opacity(ghostFill))
             RoundedRectangle(cornerRadius: 7)
                 .strokeBorder(readable(tint).opacity(0.9),
                               style: StrokeStyle(lineWidth: 1.5, dash: [4, 3]))
@@ -563,7 +576,7 @@ struct PanelView: View {
                     .foregroundStyle(readable(tint))
                     .padding(.horizontal, 9)
                     .padding(.vertical, 4)
-                    .background(tint.opacity(0.14), in: .rect(cornerRadius: 6))
+                    .background(tint.opacity(ghostFill), in: .rect(cornerRadius: 6))
                     .overlay {
                         RoundedRectangle(cornerRadius: 6)
                             .strokeBorder(readable(tint).opacity(0.8),
@@ -580,7 +593,7 @@ struct PanelView: View {
                         .foregroundStyle(readable(event.color))
                         .padding(.horizontal, 9)
                         .padding(.vertical, 4)
-                        .background(event.color.opacity(0.18), in: .rect(cornerRadius: 6))
+                        .background(event.color.opacity(blockFill), in: .rect(cornerRadius: 6))
                         .overlay {
                             if model.selectedEventID == event.id {
                                 RoundedRectangle(cornerRadius: 6)
