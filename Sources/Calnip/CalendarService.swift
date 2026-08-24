@@ -9,7 +9,9 @@ final class CalendarService {
 
     /// Events bucketed by start-of-day, so day switches render synchronously.
     private var dayCache: [Date: [EKEvent]] = [:]
-    private var preloading = false
+    /// Dedupes only the opportunistic neighbor prefetch — demanded loads must
+    /// never be skipped, or a day would render empty.
+    private var prefetching = false
 
     init() {
         NotificationCenter.default.addObserver(
@@ -99,16 +101,17 @@ final class CalendarService {
             guard let date = calendar.date(byAdding: .day, value: offset, to: anchor) else { return false }
             return dayCache[date] == nil
         }
-        guard missing, !preloading else { return }
-        Task { await preload(around: anchor) }
+        guard missing, !prefetching else { return }
+        prefetching = true
+        Task {
+            await preload(around: anchor)
+            prefetching = false
+        }
     }
 
-    /// One ranged fetch (−3…+8 days), bucketed per day.
+    /// One ranged fetch (−3…+8 days), bucketed per day. Always runs —
+    /// concurrent calls just redundantly refresh the same buckets.
     func preload(around center: Date) async {
-        guard !preloading else { return }
-        preloading = true
-        defer { preloading = false }
-
         let calendar = Calendar.current
         let anchor = calendar.startOfDay(for: center)
         guard let start = calendar.date(byAdding: .day, value: -3, to: anchor),
