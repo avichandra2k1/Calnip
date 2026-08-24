@@ -3,6 +3,7 @@ import SwiftUI
 struct PanelView: View {
     @ObservedObject var model: InputModel
     @AppStorage(Settings.viewModeKey) private var viewMode = "expanded"
+    @Environment(\.colorScheme) private var colorScheme
 
     private var expanded: Bool { viewMode == "expanded" }
     private var typing: Bool { !model.text.isEmpty }
@@ -433,7 +434,7 @@ struct PanelView: View {
                     .padding(.top, 5)
                 }
             }
-            .foregroundStyle(event.color)
+            .foregroundStyle(readable(event.color))
         }
         .overlay {
             // Conflicts stay unstyled here — the overlapping ghost makes the
@@ -459,7 +460,7 @@ struct PanelView: View {
             RoundedRectangle(cornerRadius: 7)
                 .fill(tint.opacity(0.14))
             RoundedRectangle(cornerRadius: 7)
-                .strokeBorder(tint.opacity(0.9),
+                .strokeBorder(readable(tint).opacity(0.9),
                               style: StrokeStyle(lineWidth: 1.5, dash: [4, 3]))
             Group {
                 if compact {
@@ -492,7 +493,7 @@ struct PanelView: View {
                     .padding(.top, 5)
                 }
             }
-            .foregroundStyle(tint)
+            .foregroundStyle(readable(tint))
         }
         .allowsHitTesting(false)
     }
@@ -508,7 +509,7 @@ struct PanelView: View {
             RoundedRectangle(cornerRadius: 7)
                 .fill(tint.opacity(0.14))
             RoundedRectangle(cornerRadius: 7)
-                .strokeBorder(tint.opacity(0.9),
+                .strokeBorder(readable(tint).opacity(0.9),
                               style: StrokeStyle(lineWidth: 1.5, dash: [4, 3]))
             HStack(spacing: 10) {
                 RoundedRectangle(cornerRadius: 2)
@@ -559,13 +560,13 @@ struct PanelView: View {
                 let tint = model.target?.color ?? Color.accentColor
                 Text(model.parsed.title.isEmpty ? "New event" : model.parsed.title)
                     .font(.system(size: 11.5, weight: .semibold))
-                    .foregroundStyle(tint)
+                    .foregroundStyle(readable(tint))
                     .padding(.horizontal, 9)
                     .padding(.vertical, 4)
                     .background(tint.opacity(0.14), in: .rect(cornerRadius: 6))
                     .overlay {
                         RoundedRectangle(cornerRadius: 6)
-                            .strokeBorder(tint.opacity(0.8),
+                            .strokeBorder(readable(tint).opacity(0.8),
                                           style: StrokeStyle(lineWidth: 1.2, dash: [4, 3]))
                     }
             }
@@ -576,7 +577,7 @@ struct PanelView: View {
                 } else {
                     Text(event.title)
                         .font(.system(size: 11.5, weight: .semibold))
-                        .foregroundStyle(event.color)
+                        .foregroundStyle(readable(event.color))
                         .padding(.horizontal, 9)
                         .padding(.vertical, 4)
                         .background(event.color.opacity(0.18), in: .rect(cornerRadius: 6))
@@ -748,6 +749,14 @@ struct PanelView: View {
         }
         .buttonStyle(.plain)
         .foregroundStyle(emphasized ? AnyShapeStyle(.primary) : AnyShapeStyle(.tertiary))
+    }
+
+    // MARK: - Color helpers
+
+    /// Calendar colors are tuned for dark backgrounds; on light tints they
+    /// need darkening to stay readable (what Calendar.app does).
+    private func readable(_ color: Color) -> Color {
+        colorScheme == .light ? color.mix(with: .black, by: 0.4) : color
     }
 
     // MARK: - Text helpers
