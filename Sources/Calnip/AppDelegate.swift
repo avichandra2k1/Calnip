@@ -11,10 +11,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationDidFinishLaunching(_ notification: Notification) {
         panelController = PanelController()
 
-        // Warm the event cache so the first ⌥Space shows events immediately
-        // (only when access is already granted — never prompt at launch).
-        if CalendarService.shared.hasFullAccess {
-            Task { await CalendarService.shared.preload(around: Date()) }
+        // Ask for calendar access up front, tied to launch — if the prompt
+        // appeared only once the panel was open, typing into the panel could
+        // answer (and deny) the focused permission dialog by accident.
+        Task { @MainActor in
+            let granted = await CalendarService.shared.requestAccess()
+            if granted {
+                await CalendarService.shared.preload(around: Date())
+            }
+            // First launch: open the panel so launching visibly does something.
+            if !UserDefaults.standard.bool(forKey: "hasLaunchedBefore") {
+                UserDefaults.standard.set(true, forKey: "hasLaunchedBefore")
+                panelController.show()
+            }
         }
 
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
@@ -61,6 +70,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             name: Notification.Name("com.avi.calnip.toggle"),
             object: nil
         )
+    }
+
+    /// Launching the app again (e.g. double-click in Finder) opens the panel.
+    func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows: Bool) -> Bool {
+        panelController.show()
+        return false
     }
 
     @objc private func togglePanel() {
