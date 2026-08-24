@@ -154,6 +154,9 @@ final class InputModel: ObservableObject {
             calendars = CalendarService.shared.writableCalendars.map(CalendarInfo.init)
             loadSlots()
             refreshTimeline()
+            // Warm the surrounding days so browsing and "tom" render instantly.
+            await CalendarService.shared.preload(around: Date())
+            refreshTimeline()
         }
     }
 
@@ -362,12 +365,18 @@ final class InputModel: ObservableObject {
         let day = Calendar.current.startOfDay(for: displayDay)
         let entry = parsed
         let typing = !text.isEmpty
+
+        // Cached day → render synchronously; browsing feels instant.
+        if let cached = CalendarService.shared.cachedEvents(on: day) {
+            timeline = TimelineState(
+                day: day,
+                rows: Self.buildRows(events: cached, day: day, entry: typing ? entry : nil)
+            )
+            CalendarService.shared.prefetchNeighborsIfNeeded(of: day)
+            return
+        }
         timelineTask = Task {
-            if debounce {
-                try? await Task.sleep(nanoseconds: 150_000_000)
-                guard !Task.isCancelled else { return }
-            }
-            let events = CalendarService.shared.eventsOnDay(of: day)
+            let events = await CalendarService.shared.events(on: day)
             guard !Task.isCancelled else { return }
             timeline = TimelineState(
                 day: day,

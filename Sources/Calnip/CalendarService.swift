@@ -1,10 +1,29 @@
 import EventKit
 import Foundation
 
+@MainActor
 final class CalendarService {
     static let shared = CalendarService()
     private let store = EKEventStore()
     private static let lastCalendarKey = "lastCalendarID"
+
+    /// Events bucketed by start-of-day, so day switches render synchronously.
+    private var dayCache: [Date: [EKEvent]] = [:]
+    private var preloading = false
+
+    init() {
+        NotificationCenter.default.addObserver(
+            self, selector: #selector(storeChanged),
+            name: .EKEventStoreChanged, object: store)
+    }
+
+    @objc nonisolated private func storeChanged() {
+        Task { @MainActor in CalendarService.shared.clearCache() }
+    }
+
+    func clearCache() {
+        dayCache.removeAll()
+    }
 
     enum CalendarError: LocalizedError {
         case accessDenied
@@ -58,18 +77,60 @@ final class CalendarService {
         return store.defaultCalendarForNewEvents
     }
 
-    /// Events on the same day as `date` — all-day first, then timed by start.
-    func eventsOnDay(of date: Date) -> [EKEvent] {
-        let calendar = Calendar.current
-        let dayStart = calendar.startOfDay(for: date)
-        guard let dayEnd = calendar.date(byAdding: .day, value: 1, to: dayStart) else { return [] }
-        let predicate = store.predicateForEvents(withStart: dayStart, end: dayEnd, calendars: nil)
-        return store.events(matching: predicate)
-            .sorted {
-                if $0.isAllDay != $1.isAllDay { return $0.isAllDay }
-                return $0.startDate < $1.startDate
-            }
+    // MARK: - Day events (cached)
+
+    /// Instant when cached — all-day first, then timed by start.
+    func cachedEvents(on day: Date) -> [EKEvent]? {
+        dayCache[Calendar.current.startOfDay(for: day)]
     }
+
+    func events(on day: Date) async -> [EKEvent] {
+        let key = Calendar.current.startOfDay(for: day)
+        if let cached = dayCache[key] { return cached }
+        await preload(around: key)
+        return dayCache[key] ?? []
+    }
+
+    /// Kick off a background preload if the day's neighborhood isn't cached yet.
+    func prefetchNeighborsIfNeeded(of day: Date) {
+        let calendar = Calendar.current
+        let anchor = calendar.startOfDay(for: day)
+        let missing = [-2, -1, 1, 2, 3].contains { offset in
+            guard let date = calendar.date(byAdding: .day, value: offset, to: anchor) else { return false }
+            return dayCache[date] == nil
+        }
+        guard missing, !preloading else { return }
+        Task { await preload(around: anchor) }
+    }
+
+    /// One ranged fetch (−3…+8 days), bucketed per day.
+    func preload(around center: Date) async {
+        guard !preloading else { return }
+        preloading = true
+        defer { preloading = false }
+
+        let calendar = Calendar.current
+        let anchor = calendar.startOfDay(for: center)
+        guard let start = calendar.date(byAdding: .day, value: -3, to: anchor),
+              let end = calendar.date(byAdding: .day, value: 8, to: anchor) else { return }
+        let predicate = store.predicateForEvents(withStart: start, end: end, calendars: nil)
+        let store = self.store
+        let events = await Task.detached { store.events(matching: predicate) }.value
+
+        var day = start
+        while day < end {
+            guard let next = calendar.date(byAdding: .day, value: 1, to: day) else { break }
+            dayCache[day] = events
+                .filter { $0.startDate < next && $0.endDate > day }
+                .sorted {
+                    if $0.isAllDay != $1.isAllDay { return $0.isAllDay }
+                    return $0.startDate < $1.startDate
+                }
+            day = next
+        }
+    }
+
+    // MARK: - Mutations
 
     /// Adds the event and returns the calendar it landed in.
     @discardableResult
@@ -91,6 +152,7 @@ final class CalendarService {
             event.addRecurrenceRule(Self.rule(for: recurrence, until: recurrenceEnd))
         }
         try store.save(event, span: .thisEvent)
+        clearCache()
         UserDefaults.standard.set(calendar.calendarIdentifier, forKey: Self.lastCalendarKey)
         return calendar
     }
@@ -114,6 +176,7 @@ final class CalendarService {
             event.calendar = calendar
         }
         try store.save(event, span: .thisEvent)
+        clearCache()
     }
 
     private static func rule(for spec: RecurrenceSpec, until: Date?) -> EKRecurrenceRule {
