@@ -10,6 +10,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationDidFinishLaunching(_ notification: Notification) {
         panelController = PanelController()
 
+        // Warm the event cache so the first ⌥Space shows events immediately
+        // (only when access is already granted — never prompt at launch).
+        if CalendarService.shared.hasFullAccess {
+            Task { await CalendarService.shared.preload(around: Date()) }
+        }
+
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
         statusItem.button?.image = NSImage(
             systemSymbolName: "calendar.badge.plus",

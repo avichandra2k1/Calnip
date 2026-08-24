@@ -20,11 +20,19 @@ final class CalendarService {
     }
 
     @objc nonisolated private func storeChanged() {
-        Task { @MainActor in CalendarService.shared.clearCache() }
+        Task { @MainActor in CalendarService.shared.markStale() }
     }
 
-    func clearCache() {
-        dayCache.removeAll()
+    /// Stale-while-revalidate: keep serving cached days (so the UI never goes
+    /// blank), but flag them for a background refresh.
+    private(set) var isStale = false
+
+    func markStale() {
+        isStale = true
+    }
+
+    var hasFullAccess: Bool {
+        EKEventStore.authorizationStatus(for: .event) == .fullAccess
     }
 
     enum CalendarError: LocalizedError {
@@ -131,6 +139,7 @@ final class CalendarService {
                 }
             day = next
         }
+        isStale = false
     }
 
     // MARK: - Mutations
@@ -155,7 +164,7 @@ final class CalendarService {
             event.addRecurrenceRule(Self.rule(for: recurrence, until: recurrenceEnd))
         }
         try store.save(event, span: .thisEvent)
-        clearCache()
+        markStale()
         UserDefaults.standard.set(calendar.calendarIdentifier, forKey: Self.lastCalendarKey)
         return calendar
     }
@@ -179,7 +188,7 @@ final class CalendarService {
             event.calendar = calendar
         }
         try store.save(event, span: .thisEvent)
-        clearCache()
+        markStale()
     }
 
     private static func rule(for spec: RecurrenceSpec, until: Date?) -> EKRecurrenceRule {

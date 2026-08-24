@@ -9,7 +9,9 @@ struct PanelView: View {
     private var typing: Bool { !model.text.isEmpty }
 
     // Day-grid metrics.
-    private let hourHeight: CGFloat = 46
+    private let hourHeight: CGFloat = 22
+    /// Total height a collapsed run of empty hours squeezes into.
+    private let collapsedRunHeight: CGFloat = 26
     private let gutterWidth: CGFloat = 66
     private let gridTrailingInset: CGFloat = 20
     private let maxTimelineHeight: CGFloat = 380
@@ -229,14 +231,29 @@ struct PanelView: View {
         if isToday { mark(Date(), Date()) }
         if active.isEmpty { for hour in 8..<19 { active.insert(hour) } }
 
-        let compressedHeight: CGFloat = 10
-        let heights = (0..<24).map { active.contains($0) ? hourHeight : compressedHeight }
+        // Uniform hour height; only long empty runs (4h+) collapse, each into
+        // one small uniform band — no per-hour height wobble.
+        var heights = [CGFloat](repeating: hourHeight, count: 24)
+        var cursor = 0
+        while cursor < 24 {
+            guard !active.contains(cursor) else { cursor += 1; continue }
+            var runEnd = cursor
+            while runEnd < 24, !active.contains(runEnd) { runEnd += 1 }
+            let length = runEnd - cursor
+            if length >= 4 {
+                let per = collapsedRunHeight / CGFloat(length)
+                for hour in cursor..<runEnd { heights[hour] = per }
+            }
+            cursor = runEnd
+        }
         var accumulated: [CGFloat] = [0]
         for height in heights { accumulated.append(accumulated.last! + height) }
         let totalHeight = accumulated[24]
-        // Labels/lines only at the edges of full-height regions.
+        // Labels/lines everywhere except inside collapsed bands.
         let labeledHours = (0...24).filter { hour in
-            hour == 0 || hour == 24 || active.contains(hour) || active.contains(hour - 1)
+            hour == 0 || hour == 24
+                || heights[hour] == hourHeight
+                || heights[hour - 1] == hourHeight
         }
 
         func yOffset(_ date: Date) -> CGFloat {
@@ -355,10 +372,10 @@ struct PanelView: View {
                     let width = (contentWidth / CGFloat(item.columns))
                     let x = contentX + width * CGFloat(item.column)
                     let y = max(yOffset(item.event.start), 0)
-                    let height = max(yOffset(item.event.end) - y, 24)
+                    let height = max(yOffset(item.event.end) - y, 16)
                     if model.editingEvent?.id == item.event.id {
                         editBlock
-                            .frame(width: contentWidth, height: max(height, 46))
+                            .frame(width: contentWidth, height: max(height, 36))
                             .offset(x: contentX, y: y)
                             .zIndex(3)
                     } else {
@@ -372,7 +389,7 @@ struct PanelView: View {
                 // Ghost of the entry being typed.
                 if timedPreview, let start = model.parsed.start, let end = model.parsed.end {
                     let y = max(yOffset(start), 0)
-                    let height = max(yOffset(min(end, start.addingTimeInterval(86400))) - y, 24)
+                    let height = max(yOffset(min(end, start.addingTimeInterval(86400))) - y, 16)
                     previewBlock(height: height)
                         .frame(width: contentWidth - 4, height: height)
                         .offset(x: contentX, y: y)
@@ -410,7 +427,7 @@ struct PanelView: View {
     private func eventBlock(_ event: ContextEvent, height: CGFloat, isToday: Bool) -> some View {
         let past = isToday && event.end < Date()
         let selected = model.selectedEventID == event.id
-        let compact = height < 36
+        let compact = height < 30
         return ZStack(alignment: .topLeading) {
             RoundedRectangle(cornerRadius: 7)
                 .fill(event.color.opacity(blockFill))
@@ -422,29 +439,29 @@ struct PanelView: View {
                 if compact {
                     HStack(spacing: 6) {
                         Text(event.title)
-                            .font(.system(size: 11.5, weight: .semibold))
+                            .font(.system(size: 11, weight: .semibold))
                         Text(rangeLabel(event.start, event.end))
-                            .font(.system(size: 10.5))
+                            .font(.system(size: 10))
                             .opacity(0.8)
                         Spacer(minLength: 0)
                     }
                     .padding(.horizontal, 7)
                 } else {
-                    VStack(alignment: .leading, spacing: 2) {
+                    VStack(alignment: .leading, spacing: 1) {
                         Text(event.title)
-                            .font(.system(size: 12.5, weight: .semibold))
+                            .font(.system(size: 12, weight: .semibold))
                             .lineLimit(1)
                         HStack(spacing: 4) {
                             Image(systemName: "clock")
                                 .font(.system(size: 9))
                             Text(rangeLabel(event.start, event.end))
-                                .font(.system(size: 11))
+                                .font(.system(size: 10.5))
                         }
                         .opacity(0.85)
                         Spacer(minLength: 0)
                     }
                     .padding(.horizontal, 7)
-                    .padding(.top, 5)
+                    .padding(.top, 3)
                 }
             }
             .foregroundStyle(readable(event.color))
@@ -464,7 +481,7 @@ struct PanelView: View {
     }
 
     private func previewBlock(height: CGFloat) -> some View {
-        let compact = height < 36
+        let compact = height < 30
         let tint = model.target?.color ?? Color.accentColor
         return ZStack(alignment: .topLeading) {
             // Opaque backing so overlapped blocks can't bleed through the ghost.
@@ -479,10 +496,10 @@ struct PanelView: View {
                 if compact {
                     HStack(spacing: 6) {
                         Text(model.parsed.title.isEmpty ? "New event" : model.parsed.title)
-                            .font(.system(size: 11.5, weight: .semibold))
+                            .font(.system(size: 11, weight: .semibold))
                         if let start = model.parsed.start, let end = model.parsed.end {
                             Text(rangeLabel(start, end))
-                                .font(.system(size: 10.5))
+                                .font(.system(size: 10))
                                 .opacity(0.8)
                         }
                     }
@@ -490,20 +507,20 @@ struct PanelView: View {
                 } else {
                     VStack(alignment: .leading, spacing: 2) {
                         Text(model.parsed.title.isEmpty ? "New event" : model.parsed.title)
-                            .font(.system(size: 12.5, weight: .semibold))
+                            .font(.system(size: 12, weight: .semibold))
                             .lineLimit(1)
                         if let start = model.parsed.start, let end = model.parsed.end {
                             HStack(spacing: 4) {
                                 Image(systemName: "clock")
                                     .font(.system(size: 9))
                                 Text(rangeLabel(start, end))
-                                    .font(.system(size: 11))
+                                    .font(.system(size: 10.5))
                             }
                             .opacity(0.85)
                         }
                     }
                     .padding(.horizontal, 8)
-                    .padding(.top, 5)
+                    .padding(.top, 3)
                 }
             }
             .foregroundStyle(readable(tint))
@@ -572,7 +589,7 @@ struct PanelView: View {
             if showPreview {
                 let tint = model.target?.color ?? Color.accentColor
                 Text(model.parsed.title.isEmpty ? "New event" : model.parsed.title)
-                    .font(.system(size: 11.5, weight: .semibold))
+                    .font(.system(size: 11, weight: .semibold))
                     .foregroundStyle(readable(tint))
                     .padding(.horizontal, 9)
                     .padding(.vertical, 4)
@@ -589,7 +606,7 @@ struct PanelView: View {
                         .frame(width: 260, height: 30)
                 } else {
                     Text(event.title)
-                        .font(.system(size: 11.5, weight: .semibold))
+                        .font(.system(size: 11, weight: .semibold))
                         .foregroundStyle(readable(event.color))
                         .padding(.horizontal, 9)
                         .padding(.vertical, 4)

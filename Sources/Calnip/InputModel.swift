@@ -335,6 +335,7 @@ final class InputModel: ObservableObject {
                     eventID: event.id, title: entry.title, start: start, end: end,
                     isAllDay: entry.isAllDay, calendarQuery: entry.calendarQuery,
                     calendarID: calendarID)
+                await CalendarService.shared.preload(around: start)
                 endEdit()
                 refreshTimeline()
             } catch {
@@ -366,13 +367,22 @@ final class InputModel: ObservableObject {
         let entry = parsed
         let typing = !text.isEmpty
 
-        // Cached day → render synchronously; browsing feels instant.
+        // Cached day → render synchronously; browsing feels instant. Stale
+        // data still renders (never a blank flash) and revalidates behind it.
         if let cached = CalendarService.shared.cachedEvents(on: day) {
             timeline = TimelineState(
                 day: day,
                 rows: Self.buildRows(events: cached, day: day, entry: typing ? entry : nil)
             )
-            CalendarService.shared.prefetchNeighborsIfNeeded(of: day)
+            if CalendarService.shared.isStale {
+                timelineTask = Task {
+                    await CalendarService.shared.preload(around: day)
+                    guard !Task.isCancelled else { return }
+                    refreshTimeline()
+                }
+            } else {
+                CalendarService.shared.prefetchNeighborsIfNeeded(of: day)
+            }
             return
         }
         timelineTask = Task {
@@ -424,7 +434,11 @@ final class InputModel: ObservableObject {
                     query: entry.calendarQuery, pickedID: pickedID,
                     recurrence: entry.recurrence, recurrenceEnd: entry.recurrenceEnd)
                 status = .saved(calendar: calendar.title)
+                // Warm the cache during the toast so the refreshed timeline
+                // (including the new event) renders instantly.
+                let warm = Task { await CalendarService.shared.preload(around: start) }
                 try? await Task.sleep(nanoseconds: 900_000_000)
+                await warm.value
                 // Stay open for the next entry — esc closes. The timeline stays
                 // on the added event's day, centered on it.
                 text = ""
