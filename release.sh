@@ -36,7 +36,8 @@ if [[ -f Resources/AppIcon.icns ]]; then
 fi
 
 echo "Signing as: $SIGN_ID"
-codesign --force --options runtime --timestamp --sign "$SIGN_ID" "$APP"
+codesign --force --options runtime --timestamp \
+  --entitlements Calnip.entitlements --sign "$SIGN_ID" "$APP"
 
 ditto -c -k --keepParent "$APP" "$ZIP"
 
