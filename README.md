@@ -23,7 +23,7 @@ Press a hotkey, type `lunch with sam 12-1 tom >work`, hit return. The event is o
 brew install avichandra2k1/tap/calnip
 ```
 
-Or download `Calnip.zip` from the [latest release](https://github.com/avichandra2k1/calnip/releases) and drop it in Applications.
+Or download `Calnip.zip` from the [latest release](https://github.com/avichandra2k1/Calnip/releases) and drop it in Applications.
 
 Requires macOS 26 (Tahoe). On first use, Calnip asks for calendar access.
 
