@@ -9,9 +9,9 @@ struct PanelView: View {
     private var typing: Bool { !model.text.isEmpty }
 
     // Day-grid metrics.
-    private let hourHeight: CGFloat = 22
+    private let hourHeight: CGFloat = 32
     /// Total height a collapsed run of empty hours squeezes into.
-    private let collapsedRunHeight: CGFloat = 26
+    private let collapsedRunHeight: CGFloat = 30
     private let gutterWidth: CGFloat = 66
     private let gridTrailingInset: CGFloat = 20
     private let maxTimelineHeight: CGFloat = 380
