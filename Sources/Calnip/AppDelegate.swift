@@ -22,8 +22,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             systemSymbolName: "calendar.badge.plus",
             accessibilityDescription: "Calnip"
         )
+        statusItem.button?.toolTip = "Calnip"
+        statusItem.isVisible = Settings.showMenuBarIcon
+        NotificationCenter.default.addObserver(
+            self, selector: #selector(defaultsChanged),
+            name: UserDefaults.didChangeNotification, object: nil)
 
         let menu = NSMenu()
+        let version = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? ""
+        let title = NSMenuItem(title: version.isEmpty ? "Calnip" : "Calnip \(version)",
+                               action: nil, keyEquivalent: "")
+        title.isEnabled = false
+        menu.addItem(title)
+        menu.addItem(.separator())
         let newEvent = NSMenuItem(title: "New Event", action: #selector(togglePanel), keyEquivalent: " ")
         newEvent.keyEquivalentModifierMask = .option
         newEvent.target = self
@@ -58,6 +69,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     @objc private func hotkeyChanged() {
         registerLaunchHotKey()
+    }
+
+    @objc private func defaultsChanged() {
+        statusItem.isVisible = Settings.showMenuBarIcon
     }
 
     private func registerLaunchHotKey() {

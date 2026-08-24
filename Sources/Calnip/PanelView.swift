@@ -3,6 +3,7 @@ import SwiftUI
 struct PanelView: View {
     @ObservedObject var model: InputModel
     @AppStorage(Settings.viewModeKey) private var viewMode = "expanded"
+    @AppStorage(Settings.panelStyleKey) private var panelStyle = "glass"
     @Environment(\.colorScheme) private var colorScheme
 
     private var expanded: Bool { viewMode == "expanded" }
@@ -36,8 +37,8 @@ struct PanelView: View {
             }
         }
         .frame(width: expanded ? 780 : 640, alignment: .leading)
-        .glassEffect(.regular, in: .rect(cornerRadius: 28))
-        // Transparent margin so the glass material's soft shadow can fade out
+        .modifier(PanelChrome(glass: panelStyle != "opaque"))
+        // Transparent margin so the chrome's soft shadow can fade out
         // instead of clipping in a hard rectangle at the window edge.
         .padding(40)
     }
@@ -58,14 +59,20 @@ struct PanelView: View {
     }
 
     // Hairlines and fills need real contrast on the light glass; the dark
-    // values would be glaring in light mode and vice versa.
+    // values would be glaring in light mode and vice versa. The opaque
+    // backdrop mutes lines, so they get a bump there.
+    private var opaquePanel: Bool { panelStyle == "opaque" }
     private var hairline: AnyShapeStyle {
-        colorScheme == .light ? AnyShapeStyle(Color.black.opacity(0.15))
-                              : AnyShapeStyle(.quaternary.opacity(0.5))
+        if colorScheme == .light {
+            return AnyShapeStyle(Color.black.opacity(opaquePanel ? 0.2 : 0.15))
+        }
+        return AnyShapeStyle(.quaternary.opacity(opaquePanel ? 0.8 : 0.5))
     }
     private var gridLine: AnyShapeStyle {
-        colorScheme == .light ? AnyShapeStyle(Color.black.opacity(0.1))
-                              : AnyShapeStyle(.quaternary.opacity(0.35))
+        if colorScheme == .light {
+            return AnyShapeStyle(Color.black.opacity(opaquePanel ? 0.15 : 0.1))
+        }
+        return AnyShapeStyle(.quaternary.opacity(opaquePanel ? 0.6 : 0.35))
     }
     private var blockFill: Double { colorScheme == .light ? 0.28 : 0.18 }
     private var ghostFill: Double { colorScheme == .light ? 0.22 : 0.14 }
@@ -85,7 +92,7 @@ struct PanelView: View {
                 .foregroundStyle(.secondary)
             ZStack(alignment: .leading) {
                 if model.text.isEmpty {
-                    Text("New event — try “lunch 12-1 tom”")
+                    Text("New event")
                         .font(.system(size: 24))
                         .foregroundStyle(.tertiary)
                         .allowsHitTesting(false)
@@ -842,6 +849,29 @@ struct PanelView: View {
 }
 
 // MARK: - Components
+
+/// Panel background: Liquid Glass, or a solid rounded card (Settings › Appearance).
+struct PanelChrome: ViewModifier {
+    let glass: Bool
+    @Environment(\.colorScheme) private var colorScheme
+
+    @ViewBuilder
+    func body(content: Content) -> some View {
+        if glass {
+            content
+                .glassEffect(.regular, in: .rect(cornerRadius: 28))
+        } else {
+            content
+                .background(Color(nsColor: .windowBackgroundColor), in: .rect(cornerRadius: 28))
+                .overlay {
+                    RoundedRectangle(cornerRadius: 28)
+                        .strokeBorder(.quaternary.opacity(0.6), lineWidth: 1)
+                }
+                .compositingGroup()
+                .shadow(color: .black.opacity(0.3), radius: 24, y: 10)
+        }
+    }
+}
 
 /// Raycast-style key cap: small rounded square with the key symbol.
 struct Keycap: View {

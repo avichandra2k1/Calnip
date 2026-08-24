@@ -8,99 +8,280 @@ extension Notification.Name {
 
 // MARK: - Settings view
 
+/// Behind-window translucency, macOS Settings style.
+private struct WindowBackdrop: NSViewRepresentable {
+    func makeNSView(context: Context) -> NSVisualEffectView {
+        let view = NSVisualEffectView()
+        view.material = .underWindowBackground
+        view.blendingMode = .behindWindow
+        view.state = .active
+        return view
+    }
+
+    func updateNSView(_ nsView: NSVisualEffectView, context: Context) {}
+}
+
+enum SettingsTab: String, CaseIterable {
+    case general, appearance, shortcuts, calendarsTab
+
+    var label: String {
+        switch self {
+        case .general: return "General"
+        case .appearance: return "Appearance"
+        case .shortcuts: return "Shortcuts"
+        case .calendarsTab: return "Calendars"
+        }
+    }
+
+    var icon: String {
+        switch self {
+        case .general: return "gearshape"
+        case .appearance: return "paintbrush"
+        case .shortcuts: return "keyboard"
+        case .calendarsTab: return "calendar"
+        }
+    }
+}
+
 struct SettingsView: View {
     @AppStorage(Settings.viewModeKey) private var viewMode = "expanded"
+    @AppStorage(Settings.panelStyleKey) private var panelStyle = "glass"
     @AppStorage(Settings.defaultDurationKey) private var duration = 60
     @AppStorage(Settings.defaultCalendarKey) private var defaultCalendar = "auto"
     @AppStorage(Settings.calendarSlotsKey) private var slotsRaw = ""
     @AppStorage(Settings.calendarSymbolKey) private var calendarSymbol = ">"
+    @AppStorage(Settings.hiddenCalendarsKey) private var hiddenRaw = ""
+    @AppStorage(Settings.showMenuBarIconKey) private var showMenuBarIcon = true
     @State private var calendars: [CalendarInfo] = []
+    @State private var tab: SettingsTab = .general
+
+    private let contentWidth: CGFloat = 560
 
     private var version: String {
-        Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "0.0.1"
+        Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "0.1.0"
     }
 
     var body: some View {
-        VStack(spacing: 0) {
-            header
-            divider
-            ScrollView(showsIndicators: false) {
-                VStack(spacing: 14) {
-                    generalCard
-                    shortcutsCard
-                    calendarsCard
-                }
-                .padding(20)
-            }
-            divider
-            footer
+        ZStack {
+            WindowBackdrop()
+                .ignoresSafeArea()
+            content
         }
-        .frame(width: 560, height: 680)
+        .frame(width: contentWidth, height: 560)
         .task {
             guard await CalendarService.shared.requestAccess() else { return }
             calendars = CalendarService.shared.writableCalendars.map(CalendarInfo.init)
         }
     }
 
-    private var divider: some View {
+    private var content: some View {
+        VStack(spacing: 0) {
+            header
+            tabBar
+            hairline
+            ScrollView(showsIndicators: false) {
+                VStack(alignment: .leading, spacing: 0) {
+                    switch tab {
+                    case .general: generalTab
+                    case .appearance: appearanceTab
+                    case .shortcuts: shortcutsTab
+                    case .calendarsTab: calendarsTab
+                    }
+                    Spacer(minLength: 20)
+                }
+                .padding(.horizontal, 24)
+                .padding(.top, 6)
+                .frame(width: contentWidth, alignment: .leading)
+            }
+            hairline
+            footer
+        }
+    }
+
+    // MARK: Tab bar
+
+    private var tabBar: some View {
+        HStack(spacing: 8) {
+            ForEach(SettingsTab.allCases, id: \.self) { item in
+                let selected = tab == item
+                VStack(spacing: 3) {
+                    Image(systemName: item.icon)
+                        .font(.system(size: 15, weight: .medium))
+                    Text(item.label)
+                        .font(.system(size: 11, weight: selected ? .medium : .regular))
+                }
+                .foregroundStyle(selected ? AnyShapeStyle(Color.accentColor) : AnyShapeStyle(.secondary))
+                .frame(width: 86)
+                .padding(.vertical, 7)
+                .background(
+                    selected ? AnyShapeStyle(.quaternary.opacity(0.55)) : AnyShapeStyle(.clear),
+                    in: .rect(cornerRadius: 9)
+                )
+                .contentShape(.rect)
+                .onTapGesture { tab = item }
+            }
+        }
+        .frame(maxWidth: .infinity)
+        .padding(.bottom, 12)
+    }
+
+    // MARK: Tabs
+
+    @ViewBuilder
+    private var generalTab: some View {
+        row("Default event duration",
+            caption: "Applied when no end time is typed.") {
+            Picker("", selection: $duration) {
+                ForEach([15, 30, 45, 60, 90, 120], id: \.self) { minutes in
+                    Text("\(minutes) min").tag(minutes)
+                }
+            }
+            .labelsHidden()
+            .fixedSize()
+        }
+        hairline
+        row("Calendar prefix",
+            caption: "\(calendarSymbol)work targets a matching calendar.") {
+            Picker("", selection: $calendarSymbol) {
+                ForEach([">", "@", "#", "/"], id: \.self) { symbol in
+                    Text(symbol).tag(symbol)
+                }
+            }
+            .pickerStyle(.segmented)
+            .labelsHidden()
+            .frame(width: 150)
+        }
+    }
+
+    @ViewBuilder
+    private var appearanceTab: some View {
+        row("View mode") {
+            Picker("", selection: $viewMode) {
+                Text("Minimal").tag("minimal")
+                Text("Expanded").tag("expanded")
+            }
+            .pickerStyle(.segmented)
+            .labelsHidden()
+            .frame(width: 180)
+        }
+        hairline
+        row("Panel background") {
+            Picker("", selection: $panelStyle) {
+                Text("Glass").tag("glass")
+                Text("Opaque").tag("opaque")
+            }
+            .pickerStyle(.segmented)
+            .labelsHidden()
+            .frame(width: 160)
+        }
+        hairline
+        row("Show menu bar icon") {
+            Toggle("", isOn: $showMenuBarIcon)
+                .toggleStyle(.switch)
+                .controlSize(.small)
+                .labelsHidden()
+        }
+    }
+
+    @ViewBuilder
+    private var shortcutsTab: some View {
+        row("Open Calnip") {
+            LaunchHotkeyRecorder()
+        }
+        hairline
+        row("Edit selected event") {
+            EditKeyRecorder()
+        }
+        hairline
+        sectionHeader("Fixed keys")
+        HStack(spacing: 16) {
+            fixedShortcut("↩", "add")
+            fixedShortcut("esc", "close")
+            fixedShortcut("↓", "select")
+            fixedShortcut("← →", "days")
+            fixedShortcut("⌘1–9", "calendar")
+            Spacer(minLength: 0)
+        }
+        .padding(.vertical, 6)
+    }
+
+    @ViewBuilder
+    private var calendarsTab: some View {
+        row("Default calendar") {
+            Picker("", selection: $defaultCalendar) {
+                Text("Last used").tag("auto")
+                Divider()
+                ForEach(calendars) { calendar in
+                    Text(calendar.name).tag(calendar.id)
+                }
+            }
+            .labelsHidden()
+            .fixedSize()
+        }
+        hairline
+        Text("Hidden calendars are excluded from the timeline and conflicts.")
+            .font(.system(size: 11))
+            .foregroundStyle(.tertiary)
+            .padding(.top, 12)
+            .padding(.bottom, 4)
+        ForEach(Array(calendars.enumerated()), id: \.element.id) { index, calendar in
+            calendarRow(calendar)
+            if index < calendars.count - 1 {
+                hairline
+            }
+        }
+    }
+
+    private var hairline: some View {
         Rectangle()
-            .fill(.quaternary.opacity(0.5))
+            .fill(.quaternary.opacity(0.4))
             .frame(height: 1)
     }
 
-    // MARK: Header
+    // MARK: Header / footer
 
     private var header: some View {
-        HStack(spacing: 14) {
-            ZStack {
-                RoundedRectangle(cornerRadius: 14)
-                    .fill(Color.accentColor.opacity(0.14))
-                    .frame(width: 56, height: 56)
-                Image(systemName: "calendar.badge.plus")
-                    .font(.system(size: 26, weight: .medium))
-                    .foregroundStyle(Color.accentColor)
-            }
-            VStack(alignment: .leading, spacing: 3) {
-                HStack(spacing: 8) {
-                    Text("Calnip")
-                        .font(.system(size: 22, weight: .bold))
-                    Text("v\(version)")
-                        .font(.system(size: 11, weight: .medium))
-                        .foregroundStyle(.secondary)
-                        .padding(.horizontal, 8)
-                        .padding(.vertical, 3)
-                        .background(.quaternary.opacity(0.6), in: .capsule)
-                }
-                Text("Type it. It's on your calendar.")
-                    .font(.system(size: 13))
-                    .foregroundStyle(.secondary)
-            }
-            Spacer()
+        VStack(spacing: 7) {
+            Image(systemName: "calendar.badge.plus")
+                .font(.system(size: 26, weight: .regular))
+                .foregroundStyle(.secondary)
+            Text("Calnip Settings")
+                .font(.system(size: 16, weight: .semibold))
         }
-        .padding(.horizontal, 22)
+        .frame(maxWidth: .infinity)
         .padding(.top, 26)
-        .padding(.bottom, 18)
+        .padding(.bottom, 16)
     }
 
-    // MARK: Cards
-
-    private func card(_ title: String, icon: String,
-                      @ViewBuilder content: () -> some View) -> some View {
-        VStack(alignment: .leading, spacing: 2) {
-            Label(title, systemImage: icon)
-                .font(.system(size: 12, weight: .semibold))
-                .foregroundStyle(.secondary)
-                .padding(.bottom, 8)
-            content()
+    private var footer: some View {
+        HStack(spacing: 6) {
+            Image(systemName: "lock")
+                .font(.system(size: 10))
+            Text("Local-only. Works directly with Apple Calendar.")
+                .font(.system(size: 11))
+            Spacer()
+            Text("Calnip \(version)")
+                .font(.system(size: 11))
         }
-        .padding(16)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .background(.quaternary.opacity(0.22), in: .rect(cornerRadius: 14))
+        .foregroundStyle(.tertiary)
+        .padding(.horizontal, 24)
+        .padding(.vertical, 11)
+    }
+
+    // MARK: Rows
+
+    private func sectionHeader(_ title: String) -> some View {
+        Text(title.uppercased())
+            .font(.system(size: 11, weight: .semibold))
+            .foregroundStyle(.tertiary)
+            .kerning(0.4)
+            .padding(.top, 24)
+            .padding(.bottom, 8)
     }
 
     private func row(_ label: String, caption: String? = nil,
                      @ViewBuilder control: () -> some View) -> some View {
-        HStack(alignment: .center) {
+        HStack(alignment: .center, spacing: 16) {
             VStack(alignment: .leading, spacing: 2) {
                 Text(label)
                     .font(.system(size: 13))
@@ -110,75 +291,10 @@ struct SettingsView: View {
                         .foregroundStyle(.tertiary)
                 }
             }
-            Spacer()
+            Spacer(minLength: 0)
             control()
         }
-        .padding(.vertical, 7)
-    }
-
-    private var rowDivider: some View {
-        Rectangle()
-            .fill(.quaternary.opacity(0.4))
-            .frame(height: 1)
-    }
-
-    private var generalCard: some View {
-        card("General", icon: "slider.horizontal.3") {
-            row("View", caption: viewMode == "minimal"
-                ? "Just the input bar — details appear while typing."
-                : "Day timeline, conflicts and shortcuts.") {
-                Picker("", selection: $viewMode) {
-                    Text("Minimal").tag("minimal")
-                    Text("Expanded").tag("expanded")
-                }
-                .pickerStyle(.segmented)
-                .labelsHidden()
-                .frame(width: 180)
-            }
-            rowDivider
-            row("Default duration", caption: "For events typed without an end time.") {
-                Picker("", selection: $duration) {
-                    ForEach([15, 30, 45, 60, 90, 120], id: \.self) { minutes in
-                        Text("\(minutes) min").tag(minutes)
-                    }
-                }
-                .labelsHidden()
-                .frame(width: 110)
-            }
-        }
-    }
-
-    private var shortcutsCard: some View {
-        card("Shortcuts", icon: "keyboard") {
-            row("Open Calnip", caption: "Summons the panel from anywhere.") {
-                LaunchHotkeyRecorder()
-            }
-            rowDivider
-            row("Edit selected event", caption: "⌘ plus a letter, while an event is selected.") {
-                EditKeyRecorder()
-            }
-            rowDivider
-            row("Calendar prefix", caption: "Type \(calendarSymbol)work to file into a matching calendar.") {
-                Picker("", selection: $calendarSymbol) {
-                    ForEach([">", "@", "#", "/"], id: \.self) { symbol in
-                        Text(symbol).tag(symbol)
-                    }
-                }
-                .pickerStyle(.segmented)
-                .labelsHidden()
-                .frame(width: 160)
-            }
-            rowDivider
-            HStack(spacing: 18) {
-                fixedShortcut("↩", "add")
-                fixedShortcut("esc", "close")
-                fixedShortcut("↓", "select")
-                fixedShortcut("← →", "days")
-                fixedShortcut("⌘1–9", "calendar")
-                Spacer()
-            }
-            .padding(.top, 8)
-        }
+        .padding(.vertical, 11)
     }
 
     private func fixedShortcut(_ keys: String, _ label: String) -> some View {
@@ -190,83 +306,73 @@ struct SettingsView: View {
         }
     }
 
-    private var calendarsCard: some View {
-        card("Calendars", icon: "calendar") {
-            row("Default calendar", caption: "Where events go unless you pick otherwise.") {
-                Picker("", selection: $defaultCalendar) {
-                    Text("Last used").tag("auto")
-                    ForEach(calendars) { calendar in
-                        Text(calendar.name).tag(calendar.id)
-                    }
+    // MARK: Calendars
+
+    private func calendarRow(_ calendar: CalendarInfo) -> some View {
+        let visible = visibilityBinding(for: calendar.id)
+        return HStack(spacing: 10) {
+            Circle()
+                .fill(calendar.color)
+                .frame(width: 10, height: 10)
+            Text(calendar.name)
+                .font(.system(size: 13))
+                .foregroundStyle(visible.wrappedValue ? AnyShapeStyle(.primary) : AnyShapeStyle(.tertiary))
+            Spacer(minLength: 0)
+            Picker("", selection: assignBinding(for: calendar.id)) {
+                Text("—").tag(0)
+                ForEach(1...9, id: \.self) { number in
+                    Text("⌘\(number)").tag(number)
                 }
+            }
+            .labelsHidden()
+            .fixedSize()
+            .disabled(!visible.wrappedValue)
+            Toggle("", isOn: visible)
+                .toggleStyle(.switch)
+                .controlSize(.small)
                 .labelsHidden()
-                .frame(width: 160)
-            }
-            rowDivider
-            Text("⌘1–9 assignments")
-                .font(.system(size: 12, weight: .medium))
-                .foregroundStyle(.secondary)
-                .padding(.top, 8)
-                .padding(.bottom, 4)
-            Grid(alignment: .leading, horizontalSpacing: 12, verticalSpacing: 8) {
-                ForEach(0..<3, id: \.self) { rowIndex in
-                    GridRow {
-                        ForEach(0..<3, id: \.self) { columnIndex in
-                            let number = rowIndex * 3 + columnIndex + 1
-                            HStack(spacing: 6) {
-                                Keycap("⌘\(number)")
-                                Picker("", selection: slotBinding(number)) {
-                                    Text("None").tag("")
-                                    ForEach(calendars) { calendar in
-                                        Text(calendar.name).tag(calendar.id)
-                                    }
-                                }
-                                .labelsHidden()
-                                .frame(width: 118)
-                            }
-                        }
-                    }
-                }
-            }
         }
+        .padding(.vertical, 7)
     }
 
-    // MARK: Footer
-
-    private var footer: some View {
-        HStack(spacing: 6) {
-            Image(systemName: "lock")
-                .font(.system(size: 10))
-            Text("Calnip \(version) — a tiny launcher for Apple Calendar. Everything stays on your Mac.")
-                .font(.system(size: 11))
-            Spacer()
-        }
-        .foregroundStyle(.tertiary)
-        .padding(.horizontal, 22)
-        .padding(.vertical, 12)
-    }
-
-    // MARK: Slot storage
-
-    /// Slots persist as comma-joined calendar IDs; empty entry = unassigned.
-    private func slotBinding(_ number: Int) -> Binding<String> {
+    private func visibilityBinding(for id: String) -> Binding<Bool> {
         Binding(
             get: {
-                if slotsRaw.isEmpty {
-                    return number <= 5 && number - 1 < calendars.count ? calendars[number - 1].id : ""
-                }
-                let slots = slotsRaw.components(separatedBy: ",")
-                return number - 1 < slots.count ? slots[number - 1] : ""
+                !hiddenRaw.components(separatedBy: ",").contains(id)
             },
-            set: { newValue in
-                var slots: [String]
-                if slotsRaw.isEmpty {
-                    slots = (0..<9).map { $0 < 5 && $0 < calendars.count ? calendars[$0].id : "" }
-                } else {
-                    slots = slotsRaw.components(separatedBy: ",")
+            set: { visible in
+                var hidden = Set(hiddenRaw.components(separatedBy: ",").filter { !$0.isEmpty })
+                if visible { hidden.remove(id) } else { hidden.insert(id) }
+                hiddenRaw = hidden.sorted().joined(separator: ",")
+            }
+        )
+    }
+
+    // MARK: Slot storage (slots persist as comma-joined calendar IDs)
+
+    private func effectiveSlots() -> [String] {
+        var slots: [String]
+        if slotsRaw.isEmpty {
+            slots = calendars.prefix(5).map(\.id)
+        } else {
+            slots = slotsRaw.components(separatedBy: ",")
+        }
+        while slots.count < 9 { slots.append("") }
+        return slots
+    }
+
+    /// Assignment from the calendar's side; picking a taken number steals it.
+    private func assignBinding(for calendarID: String) -> Binding<Int> {
+        Binding(
+            get: {
+                (effectiveSlots().firstIndex(of: calendarID)).map { $0 + 1 } ?? 0
+            },
+            set: { newNumber in
+                var slots = effectiveSlots()
+                for index in slots.indices where slots[index] == calendarID {
+                    slots[index] = ""
                 }
-                while slots.count < 9 { slots.append("") }
-                slots[number - 1] = newValue
+                if newNumber > 0 { slots[newNumber - 1] = calendarID }
                 slotsRaw = slots.joined(separator: ",")
             }
         )

@@ -14,6 +14,20 @@ enum Settings {
     static let launchDisplayKey = "launchDisplay"
     static let editKeyKey = "editKey"
     static let calendarSymbolKey = "calendarSymbol"
+    static let hiddenCalendarsKey = "hiddenCalendars"
+    static let panelStyleKey = "panelStyle"   // "glass" | "opaque"
+    static let showMenuBarIconKey = "showMenuBarIcon"
+
+    static var showMenuBarIcon: Bool {
+        UserDefaults.standard.object(forKey: showMenuBarIconKey) as? Bool ?? true
+    }
+
+    /// Calendars excluded from the timeline, conflicts, and ⌘-slots.
+    static var hiddenCalendarIDs: Set<String> {
+        guard let raw = UserDefaults.standard.string(forKey: hiddenCalendarsKey),
+              !raw.isEmpty else { return [] }
+        return Set(raw.components(separatedBy: ","))
+    }
 
     /// Launch hotkey, Carbon encoding. Defaults: ⌥Space (keycode 49, optionKey).
     static var launchKeyCode: Int {
@@ -185,10 +199,14 @@ final class InputModel: ObservableObject {
     }
 
     private func loadSlots() {
+        let hidden = Settings.hiddenCalendarIDs
         let stored = Settings.slotIDs
-        let ids = stored.isEmpty ? calendars.prefix(5).map(\.id) : stored
+        let ids = stored.isEmpty
+            ? calendars.filter { !hidden.contains($0.id) }.prefix(5).map(\.id)
+            : stored
         slotCalendars = ids.enumerated().compactMap { index, id in
-            guard !id.isEmpty, let info = calendars.first(where: { $0.id == id }) else { return nil }
+            guard !id.isEmpty, !hidden.contains(id),
+                  let info = calendars.first(where: { $0.id == id }) else { return nil }
             return SlotCalendar(number: index + 1, info: info)
         }
     }
@@ -422,7 +440,12 @@ final class InputModel: ObservableObject {
     /// All-day rows first, then every timed event of the day (the view
     /// scrolls). Conflicts marked only for a timed entry on the displayed day —
     /// all-day events never conflict in either direction.
-    private static func buildRows(events: [EKEvent], day: Date, entry: ParsedEntry?) -> [ContextEvent] {
+    private static func buildRows(events allEvents: [EKEvent], day: Date, entry: ParsedEntry?) -> [ContextEvent] {
+        // Hidden calendars are invisible to both display and conflict checks.
+        let hidden = Settings.hiddenCalendarIDs
+        let events = hidden.isEmpty ? allEvents : allEvents.filter {
+            !hidden.contains($0.calendar?.calendarIdentifier ?? "")
+        }
         let calendar = Calendar.current
         var conflictWindow: (start: Date, end: Date)?
         if let entry, !entry.isAllDay, let start = entry.start, let end = entry.end,
