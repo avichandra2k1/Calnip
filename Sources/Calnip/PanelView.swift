@@ -20,7 +20,11 @@ struct PanelView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             inputRow
-            if expanded {
+            if model.accessBlocked {
+                accessBanner
+                    .padding(.horizontal, 22)
+                    .padding(.bottom, 16)
+            } else if expanded {
                 expandedContent
             } else if typing {
                 chipsRow
@@ -115,6 +119,29 @@ struct PanelView: View {
         }
         .padding(.horizontal, 24)
         .padding(.vertical, 20)
+    }
+
+    /// Shown instead of the timeline when calendar access was denied.
+    private var accessBanner: some View {
+        HStack(spacing: 12) {
+            Image(systemName: "exclamationmark.triangle.fill")
+                .font(.system(size: 16))
+                .foregroundStyle(.orange)
+            VStack(alignment: .leading, spacing: 2) {
+                Text("Calendar access not granted")
+                    .font(.system(size: 13, weight: .medium))
+                Text("Calnip can't read or add events without full calendar access.")
+                    .font(.system(size: 11))
+                    .foregroundStyle(.secondary)
+            }
+            Spacer()
+            Button("Open Privacy Settings") {
+                CalendarService.openPrivacySettings()
+            }
+            .controlSize(.small)
+        }
+        .padding(14)
+        .background(.orange.opacity(0.1), in: .rect(cornerRadius: 12))
     }
 
     // MARK: - Chips

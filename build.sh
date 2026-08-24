@@ -10,6 +10,10 @@ rm -rf "$APP"
 mkdir -p "$APP/Contents/MacOS"
 cp .build/release/Calnip "$APP/Contents/MacOS/Calnip"
 cp Info.plist "$APP/Contents/Info.plist"
+if [[ -f Resources/AppIcon.icns ]]; then
+  mkdir -p "$APP/Contents/Resources"
+  cp Resources/AppIcon.icns "$APP/Contents/Resources/"
+fi
 # Stable identity keeps the calendar permission grant across rebuilds
 # (ad-hoc "-" changes cdhash every build and re-triggers the TCC prompt).
 # Prefer the personal team's cert; fall back to any dev cert, then ad-hoc.

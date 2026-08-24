@@ -155,6 +155,8 @@ final class InputModel: ObservableObject {
     @Published private(set) var editCalendarID: String?
     /// Where the timeline should center (a just-saved event); nil = now.
     @Published private(set) var focusDate: Date?
+    /// The user denied (or restricted) calendar access; the app can't work.
+    @Published private(set) var accessBlocked = false
 
     private var accessGranted = false
     private var pickedCalendarID: String?
@@ -187,6 +189,7 @@ final class InputModel: ObservableObject {
     func prepare() {
         Task {
             accessGranted = await CalendarService.shared.requestAccess()
+            accessBlocked = !accessGranted && CalendarService.shared.isAccessBlocked
             resolveTarget()
             guard accessGranted else { return }
             calendars = CalendarService.shared.writableCalendars.map(CalendarInfo.init)

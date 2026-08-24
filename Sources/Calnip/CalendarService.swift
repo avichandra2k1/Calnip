@@ -1,3 +1,4 @@
+import AppKit
 import EventKit
 import Foundation
 
@@ -33,6 +34,20 @@ final class CalendarService {
 
     var hasFullAccess: Bool {
         EKEventStore.authorizationStatus(for: .event) == .fullAccess
+    }
+
+    /// The user has answered the prompt with something other than full access,
+    /// so the app cannot work until they change it in System Settings.
+    var isAccessBlocked: Bool {
+        switch EKEventStore.authorizationStatus(for: .event) {
+        case .denied, .restricted, .writeOnly: return true
+        default: return false
+        }
+    }
+
+    static func openPrivacySettings() {
+        let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Calendars")!
+        NSWorkspace.shared.open(url)
     }
 
     enum CalendarError: LocalizedError {

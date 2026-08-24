@@ -30,6 +30,10 @@ rm -rf "$APP" "$ZIP"
 mkdir -p "$APP/Contents/MacOS"
 cp .build/apple/Products/Release/Calnip "$APP/Contents/MacOS/Calnip"
 cp Info.plist "$APP/Contents/Info.plist"
+if [[ -f Resources/AppIcon.icns ]]; then
+  mkdir -p "$APP/Contents/Resources"
+  cp Resources/AppIcon.icns "$APP/Contents/Resources/"
+fi
 
 echo "Signing as: $SIGN_ID"
 codesign --force --options runtime --timestamp --sign "$SIGN_ID" "$APP"

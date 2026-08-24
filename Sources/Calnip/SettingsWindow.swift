@@ -54,6 +54,7 @@ struct SettingsView: View {
     @AppStorage(Settings.showMenuBarIconKey) private var showMenuBarIcon = true
     @State private var calendars: [CalendarInfo] = []
     @State private var tab: SettingsTab = .general
+    @State private var accessBlocked = false
 
     private let contentWidth: CGFloat = 560
 
@@ -69,7 +70,10 @@ struct SettingsView: View {
         }
         .frame(width: contentWidth, height: 560)
         .task {
-            guard await CalendarService.shared.requestAccess() else { return }
+            guard await CalendarService.shared.requestAccess() else {
+                accessBlocked = CalendarService.shared.isAccessBlocked
+                return
+            }
             calendars = CalendarService.shared.writableCalendars.map(CalendarInfo.init)
         }
     }
@@ -207,6 +211,28 @@ struct SettingsView: View {
 
     @ViewBuilder
     private var calendarsTab: some View {
+        if accessBlocked {
+            HStack(spacing: 12) {
+                Image(systemName: "exclamationmark.triangle.fill")
+                    .font(.system(size: 16))
+                    .foregroundStyle(.orange)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Calendar access not granted")
+                        .font(.system(size: 13, weight: .medium))
+                    Text("Grant full calendar access, then reopen Calnip.")
+                        .font(.system(size: 11))
+                        .foregroundStyle(.secondary)
+                }
+                Spacer()
+                Button("Open Privacy Settings") {
+                    CalendarService.openPrivacySettings()
+                }
+                .controlSize(.small)
+            }
+            .padding(14)
+            .background(.orange.opacity(0.1), in: .rect(cornerRadius: 12))
+            .padding(.top, 12)
+        }
         row("Default calendar") {
             Picker("", selection: $defaultCalendar) {
                 Text("Last used").tag("auto")
