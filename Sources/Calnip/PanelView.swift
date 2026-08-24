@@ -451,14 +451,15 @@ struct PanelView: View {
 
     private func previewBlock(height: CGFloat) -> some View {
         let compact = height < 36
+        let tint = model.target?.color ?? Color.accentColor
         return ZStack(alignment: .topLeading) {
             // Opaque backing so overlapped blocks can't bleed through the ghost.
             RoundedRectangle(cornerRadius: 7)
                 .fill(.thickMaterial)
             RoundedRectangle(cornerRadius: 7)
-                .fill(Color.accentColor.opacity(0.2))
+                .fill(tint.opacity(0.14))
             RoundedRectangle(cornerRadius: 7)
-                .strokeBorder(Color.accentColor,
+                .strokeBorder(tint.opacity(0.9),
                               style: StrokeStyle(lineWidth: 1.5, dash: [4, 3]))
             Group {
                 if compact {
@@ -491,7 +492,7 @@ struct PanelView: View {
                     .padding(.top, 5)
                 }
             }
-            .foregroundStyle(Color.accentColor)
+            .foregroundStyle(tint)
         }
         .allowsHitTesting(false)
     }
@@ -499,14 +500,15 @@ struct PanelView: View {
     /// Inline NLP edit field styled like an event block (⌘E).
     private var editBlock: some View {
         let editCalendar = model.calendars.first { $0.id == model.editCalendarID }
+        let tint = editCalendar?.color ?? Color.accentColor
         return ZStack(alignment: .leading) {
-            // Same treatment as the new-event ghost: readable backing + dashed border.
+            // Same treatment as the new-event ghost, tinted by the target calendar.
             RoundedRectangle(cornerRadius: 7)
                 .fill(.thickMaterial)
             RoundedRectangle(cornerRadius: 7)
-                .fill(Color.accentColor.opacity(0.2))
+                .fill(tint.opacity(0.14))
             RoundedRectangle(cornerRadius: 7)
-                .strokeBorder(Color.accentColor,
+                .strokeBorder(tint.opacity(0.9),
                               style: StrokeStyle(lineWidth: 1.5, dash: [4, 3]))
             HStack(spacing: 10) {
                 RoundedRectangle(cornerRadius: 2)
@@ -554,15 +556,16 @@ struct PanelView: View {
                 .foregroundStyle(.tertiary)
                 .frame(width: gutterWidth - 14, alignment: .trailing)
             if showPreview {
+                let tint = model.target?.color ?? Color.accentColor
                 Text(model.parsed.title.isEmpty ? "New event" : model.parsed.title)
                     .font(.system(size: 11.5, weight: .semibold))
-                    .foregroundStyle(Color.accentColor)
+                    .foregroundStyle(tint)
                     .padding(.horizontal, 9)
                     .padding(.vertical, 4)
-                    .background(Color.accentColor.opacity(0.14), in: .rect(cornerRadius: 6))
+                    .background(tint.opacity(0.14), in: .rect(cornerRadius: 6))
                     .overlay {
                         RoundedRectangle(cornerRadius: 6)
-                            .strokeBorder(Color.accentColor.opacity(0.8),
+                            .strokeBorder(tint.opacity(0.8),
                                           style: StrokeStyle(lineWidth: 1.2, dash: [4, 3]))
                     }
             }
