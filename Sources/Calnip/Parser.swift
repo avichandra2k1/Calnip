@@ -132,10 +132,16 @@ enum Parser {
         pattern: #"(?i)\b(?:till|until|til)\s+(\d{1,2})(?:st|nd|rd|th)?(?![\w:])"#
     )
 
-    // ">work", ">Personal"
-    private static let calendarRegex = try! NSRegularExpression(
-        pattern: #"(?<!\S)>([^\s>]+)"#
-    )
+    // ">work", ">Personal" — the symbol is configurable in Settings.
+    private static var cachedCalendarRegex: (symbol: String, regex: NSRegularExpression)?
+    private static func calendarRegex() -> NSRegularExpression {
+        let symbol = UserDefaults.standard.string(forKey: "calendarSymbol") ?? ">"
+        if let cached = cachedCalendarRegex, cached.symbol == symbol { return cached.regex }
+        let escaped = NSRegularExpression.escapedPattern(for: symbol)
+        let regex = try! NSRegularExpression(pattern: "(?<!\\S)\(escaped)([^\\s\(escaped)]+)")
+        cachedCalendarRegex = (symbol, regex)
+        return regex
+    }
 
     // A trailing "at " directly before a time token gets absorbed into the chip cut.
     private static let atPrefixRegex = try! NSRegularExpression(
@@ -261,7 +267,7 @@ enum Parser {
         // (recurrence end and dates are resolved after tokens below)
 
         // --- calendar ---
-        if let m = calendarRegex.firstMatch(in: input, range: full), !overlapsExisting(m.range),
+        if let m = calendarRegex().firstMatch(in: input, range: full), !overlapsExisting(m.range),
            let query = group(m, 1) {
             append(.calendar(query: query), m.range)
             entry.tokens = tokens

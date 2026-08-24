@@ -9,6 +9,30 @@ enum Settings {
     static let defaultDurationKey = "defaultDurationMinutes"
     static let defaultCalendarKey = "defaultCalendarID"
     static let calendarSlotsKey = "calendarSlots"
+    static let launchKeyCodeKey = "launchKeyCode"
+    static let launchModifiersKey = "launchModifiers"
+    static let launchDisplayKey = "launchDisplay"
+    static let editKeyKey = "editKey"
+    static let calendarSymbolKey = "calendarSymbol"
+
+    /// Launch hotkey, Carbon encoding. Defaults: ⌥Space (keycode 49, optionKey).
+    static var launchKeyCode: Int {
+        UserDefaults.standard.object(forKey: launchKeyCodeKey) as? Int ?? 49
+    }
+    static var launchModifiers: Int {
+        UserDefaults.standard.object(forKey: launchModifiersKey) as? Int ?? 2048
+    }
+    static var launchDisplay: String {
+        UserDefaults.standard.string(forKey: launchDisplayKey) ?? "⌥ Space"
+    }
+    /// ⌘+letter that opens inline editing on the selected event.
+    static var editKey: String {
+        UserDefaults.standard.string(forKey: editKeyKey) ?? "e"
+    }
+    /// Prefix that targets a calendar in the input, e.g. ">work".
+    static var calendarSymbol: String {
+        UserDefaults.standard.string(forKey: calendarSymbolKey) ?? ">"
+    }
 
     static var isExpanded: Bool {
         UserDefaults.standard.string(forKey: viewModeKey) ?? "expanded" == "expanded"

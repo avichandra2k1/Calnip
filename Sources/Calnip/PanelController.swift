@@ -25,7 +25,7 @@ final class FloatingPanel: NSPanel {
             onCommandComma?()
             return true
         }
-        if char == "e" {
+        if String(char) == Settings.editKey.lowercased() {
             onCommandE?()
             return true
         }

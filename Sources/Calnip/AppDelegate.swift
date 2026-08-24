@@ -6,6 +6,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var statusItem: NSStatusItem!
     private var panelController: PanelController!
     private var hotKey: HotKey?
+    private var newEventItem: NSMenuItem?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         panelController = PanelController()
@@ -26,6 +27,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let newEvent = NSMenuItem(title: "New Event", action: #selector(togglePanel), keyEquivalent: " ")
         newEvent.keyEquivalentModifierMask = .option
         newEvent.target = self
+        newEventItem = newEvent
         menu.addItem(newEvent)
         let settings = NSMenuItem(title: "Settings…", action: #selector(openSettings), keyEquivalent: ",")
         settings.target = self
@@ -35,9 +37,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         menu.addItem(quit)
         statusItem.menu = menu
 
-        hotKey = HotKey(keyCode: UInt32(kVK_Space), modifiers: UInt32(optionKey)) { [weak self] in
-            DispatchQueue.main.async { self?.togglePanel() }
-        }
+        registerLaunchHotKey()
+        NotificationCenter.default.addObserver(
+            self, selector: #selector(hotkeyChanged),
+            name: .calnipHotkeyChanged, object: nil)
 
         // Scriptable toggle (handy for testing):
         //   DistributedNotificationCenter post "com.avi.calnip.toggle"
@@ -51,6 +54,39 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     @objc private func togglePanel() {
         panelController.toggle()
+    }
+
+    @objc private func hotkeyChanged() {
+        registerLaunchHotKey()
+    }
+
+    private func registerLaunchHotKey() {
+        // Replacing the HotKey unregisters the old one in its deinit.
+        hotKey = HotKey(keyCode: UInt32(Settings.launchKeyCode),
+                        modifiers: UInt32(Settings.launchModifiers)) { [weak self] in
+            DispatchQueue.main.async { self?.togglePanel() }
+        }
+        updateMenuShortcut()
+    }
+
+    /// Best-effort mirror of the hotkey in the status menu.
+    private func updateMenuShortcut() {
+        guard let item = newEventItem else { return }
+        let keyName = Settings.launchDisplay.components(separatedBy: " ").last ?? ""
+        if Settings.launchKeyCode == 49 {
+            item.keyEquivalent = " "
+        } else if keyName.count == 1 {
+            item.keyEquivalent = keyName.lowercased()
+        } else {
+            item.keyEquivalent = ""
+        }
+        var mask: NSEvent.ModifierFlags = []
+        let mods = Settings.launchModifiers
+        if mods & 0x0100 != 0 { mask.insert(.command) }
+        if mods & 0x0200 != 0 { mask.insert(.shift) }
+        if mods & 0x0800 != 0 { mask.insert(.option) }
+        if mods & 0x1000 != 0 { mask.insert(.control) }
+        item.keyEquivalentModifierMask = mask
     }
 
     @objc private func openSettings() {
