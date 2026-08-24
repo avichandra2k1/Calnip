@@ -4,7 +4,9 @@ A keyboard-first quick-entry launcher for Apple Calendar.
 
 Press a hotkey, type `lunch with sam 12-1 tom >work`, hit return. The event is on your calendar.
 
-<!-- TODO: hero screenshot/GIF: docs/hero.png -->
+[![Calnip demo](docs/hero.png)](docs/demo.mp4)
+
+*Click the image for a 60 second demo.*
 
 ## Features
 
